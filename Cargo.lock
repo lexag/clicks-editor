@@ -691,6 +691,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "clicks-editor"
+version = "1.0.0"
+dependencies = [
+ "common",
+ "eframe",
+ "egui",
+ "egui_extras",
+ "egui_material_icons",
+ "hound",
+ "open",
+ "postcard",
+ "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -927,23 +944,6 @@ dependencies = [
  "bytemuck",
  "emath",
  "serde",
-]
-
-[[package]]
-name = "editor"
-version = "0.1.0"
-dependencies = [
- "common",
- "eframe",
- "egui",
- "egui_extras",
- "egui_material_icons",
- "hound",
- "open",
- "postcard",
- "rfd",
- "serde",
- "serde_json",
 ]
 
 [[package]]

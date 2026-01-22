@@ -60,7 +60,7 @@
 
     <Product
         Id='*'
-        Name='editor'
+        Name='clicks-editor'
         UpgradeCode='023685F8-4662-49BF-8602-05A1696BDAD1'
         Manufacturer='Axel Stenberg'
         Language='1033'
@@ -83,11 +83,11 @@
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
-        <Property Id='DiskPrompt' Value='editor Installation'/>
+        <Property Id='DiskPrompt' Value='clicks-editor Installation'/>
 
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-                <Directory Id='APPLICATIONFOLDER' Name='editor'>
+                <Directory Id='APPLICATIONFOLDER' Name='clicks-editor'>
                     
                     <!--
                       Enabling the license sidecar file in the installer is a four step process:
@@ -123,9 +123,9 @@
                         <Component Id='binary0' Guid='*'>
                             <File
                                 Id='exe0'
-                                Name='editor.exe'
+                                Name='clicks-editor.exe'
                                 DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\editor.exe'
+                                Source='$(var.CargoTargetBinDir)\clicks-editor.exe'
                                 KeyPath='yes'/>
                         </Component>
                     </Directory>
