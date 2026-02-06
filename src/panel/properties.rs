@@ -230,7 +230,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
                                             JumpModeChange::Toggle,
                                         ] {
                                             ui.selectable_value(
-                                                when_jumped,
+                                                when_passed,
                                                 val.clone(),
                                                 format!("{}", val),
                                             );
