@@ -4,7 +4,7 @@ use crate::{
 use common::{
     beat::Beat,
     cue::{Cue, CueMetadata, Show},
-    event::{Event, EventDescription, JumpModeChange, JumpRequirement},
+    event::{Event, EventCursor, EventDescription, JumpModeChange, JumpRequirement},
     mem::{smpte::TimecodeInstant, str::StaticString},
 };
 use egui::{Color32, Image, Key, KeyboardShortcut, ModifierNames, Modifiers};
@@ -348,6 +348,12 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).beats.remove(app.selected_beat_idx);
                 app.selected_beat_idx = app.selected_beat_idx.saturating_sub(1);
                 cue_mut!(app).reorder_numbers();
+                for i in 0..cue!(app).events.len() {
+                    if let Some(event) = cue_mut!(app).events.get_mut(i as u8) && event.location as usize > app.selected_beat_idx {
+                        event.location -= 1;
+                    }
+                }
+                
             },
             interactible: |app| has_beat!(app),
             active: |app| false,
@@ -370,9 +376,15 @@ pub fn action(action_id: &str) -> Action {
                     .filter(|b| b.bar_number != beat.bar_number)
                     .cloned()
                     .collect::<Vec<Beat>>();
-                app.selected_beat_idx -= len_pre - cue!(app).beats.len();
+                let num_rm = len_pre - cue!(app).beats.len();
+                app.selected_beat_idx -= num_rm;
                 cue_mut!(app).beats = beat_vec;
                 cue_mut!(app).reorder_numbers();
+                for i in 0..cue!(app).events.len() {
+                    if let Some(event) = cue_mut!(app).events.get_mut(i as u8) && event.location as usize > app.selected_beat_idx {
+                        event.location -= num_rm as u16;
+                    }
+                }
             },
             interactible: |app| has_beat!(app),
             active: |app| false,
