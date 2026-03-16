@@ -124,7 +124,7 @@ impl TimelineRenderer {
         let mut cursor = EventCursor::new(&events);
         while let Some(_beat) = self.next_beat() {
             while cursor.at_or_before(self.beat_idx as u16) && let Some(event) = cursor.get_next() {
-                if let Some(EventDescription::TimecodeEvent { time }) = event.event {
+                if let Some(EventDescription::TimecodeEvent { time, properties }) = event.event {
                     p.rect_filled(
                         Rect::from_min_size(
                             self.head,

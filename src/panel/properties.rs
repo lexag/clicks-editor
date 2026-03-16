@@ -146,7 +146,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
                                 *label = StaticString::new(&name);
                                 ui.end_row();
                             }
-                            Some(EventDescription::TimecodeEvent { time }) => {
+                            Some(EventDescription::TimecodeEvent { time, properties }) => {
                                 ui.label("Time:");
                                 ui.horizontal(|ui| {
                                     for (val, max, unit) in [

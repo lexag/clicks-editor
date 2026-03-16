@@ -5,7 +5,7 @@ use common::{
     beat::Beat,
     cue::{Cue, CueMetadata, Show},
     event::{Event, EventDescription, JumpModeChange, JumpRequirement},
-    mem::{smpte::TimecodeInstant, str::StaticString},
+    mem::{smpte::{TimecodeInstant, TimecodeProperties}, str::StaticString},
 };
 use egui::{Color32, Image, Key, KeyboardShortcut, ModifierNames, Modifiers};
 
@@ -564,6 +564,7 @@ pub fn action(action_id: &str) -> Action {
                     app.selected_beat_idx as u16,
                     EventDescription::TimecodeEvent {
                         time: TimecodeInstant::new(25),
+                        properties: TimecodeProperties::default()
                     },
                 ));
             },
