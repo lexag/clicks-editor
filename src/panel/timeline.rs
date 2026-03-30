@@ -1,6 +1,12 @@
 use crate::app::ClicksEditorApp;
-use common::cue::Cue;
-use egui::{pos2, vec2, Align2, Color32, FontId, Painter, Response, Stroke, Style, Vec2, Visuals};
+use common::{
+    cue::Cue,
+    event::{EventDescription, JumpModeChange, JumpRequirement},
+};
+use egui::{
+    pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, Shape,
+    Stroke, Style, Vec2, Visuals,
+};
 
 #[derive(Clone)]
 struct RunningClip {
@@ -122,6 +128,86 @@ impl TimelineRenderer {
         self.resp.rect.bottom()
     }
 
+    fn mm_rect(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Rect {
+        Rect::from_min_max(
+            self.resp.rect.min + vec2(x1, y1),
+            self.resp.rect.min + vec2(x2, y2),
+        )
+    }
+
+    fn lane_rect(&self, lane: usize, start: usize, end: usize) -> Rect {
+        Rect::from_min_max(
+            pos2(self.x(start), self.y(lane)),
+            pos2(self.x_end(end), self.y_end(lane)),
+        )
+    }
+
+    fn draw_dashed_rect(&self, rect: Rect, stroke: Stroke, fill: Color32, spacing: f32) {
+        // Optional: draw the rounded rectangle border
+        self.painter
+            .rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+
+        // Diagonal line parameters
+        let stroke = Stroke::new(stroke.width, fill);
+
+        let min = rect.min;
+        let max = rect.max;
+
+        let mut offset = 0.0;
+        let max_dim = rect.width() + rect.height();
+        let inset = stroke.width * 0.5;
+
+        while offset < max_dim {
+            let start = if offset < rect.width() {
+                Pos2::new(min.x + offset, max.y - inset)
+            } else {
+                Pos2::new(max.x - inset, max.y - (offset - rect.width()))
+            };
+
+            let end = if offset < rect.height() {
+                Pos2::new(min.x + inset, max.y - offset)
+            } else {
+                Pos2::new(min.x + (offset - rect.height()), min.y + inset)
+            };
+
+            self.painter.line_segment([start, end], stroke);
+
+            offset += spacing;
+        }
+    }
+
+    //fn draw_dashed_rect(
+    //    &self,
+    //    rect: Rect,
+    //    stroke: Stroke,
+    //    fill: Color32,
+    //    corner_radius: impl Into<CornerRadius> + Copy,
+    //    spacing_multiplier: f32,
+    //) {
+    //    self.painter
+    //        .rect_stroke(rect, corner_radius, stroke, egui::StrokeKind::Inside);
+    //    let cr: CornerRadius = corner_radius.into();
+    //    let line_dist = cr.average() * spacing_multiplier;
+    //    let num_lines = ((rect.height() + rect.width()) / line_dist) as usize;
+    //    for i in 0..num_lines {
+    //        let distance_along = (i + 1) as f32 * (line_dist);
+    //        let x1_off = distance_along % rect.width();
+    //        let y1_off = distance_along - x1_off;
+    //        let leg_len = (rect.height() - y1_off).min(rect.width() - x1_off);
+    //        let x1 = rect.min.x + x1_off;
+    //        let y1 = rect.min.y + y1_off;
+    //        let x2 = x1 + leg_len;
+    //        let y2 = y1 + leg_len;
+    //        let a = pos2(x1, y1);
+    //        let b = pos2(x2, y2);
+    //        self.painter.circle_filled(a, 5.0, Color32::GREEN);
+    //        self.painter.circle_filled(b, 5.0, Color32::RED);
+
+    //        self.painter
+    //            .line_segment([a, b], Stroke::new(stroke.width, fill));
+    //    }
+    //}
+
     fn draw_vertical_line(&self, x: f32, lane_start: usize, lane_end: usize, stroke: Stroke) {
         self.painter.line_segment(
             [pos2(x, self.y(lane_start)), pos2(x, self.y_end(lane_end))],
@@ -171,6 +257,103 @@ impl TimelineRenderer {
                 self.draw_header(i, 1, format!("{}.{}", beat.bar_number, beat.count));
             }
         }
+    }
+
+    pub fn render_jumps(&self) {
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::JumpEvent {
+                destination,
+                requirement,
+                when_jumped,
+                when_passed,
+            }) = event.event
+            {
+                self.render_jump(
+                    event.location,
+                    destination,
+                    when_jumped,
+                    when_passed,
+                    requirement,
+                );
+            }
+        }
+    }
+
+    pub fn render_jump(
+        &self,
+        location: u16,
+        destination: u16,
+        when_jumped: JumpModeChange,
+        when_passed: JumpModeChange,
+        requirement: JumpRequirement,
+    ) {
+        if destination < location && when_jumped == JumpModeChange::SetOff {
+            self.render_jump_repeat(location, destination);
+        } else if destination < location {
+            self.render_jump_vamp(location, destination)
+        } else {
+            self.render_jump_skip(location, destination)
+        };
+    }
+
+    fn render_jump_repeat(&self, location: u16, destination: u16) {
+        let rect = self.lane_rect(2, destination.into(), location.into());
+        self.painter.rect(
+            rect,
+            5.0,
+            Color32::YELLOW.gamma_multiply(0.5),
+            Stroke::new(2.0, Color32::YELLOW),
+            egui::StrokeKind::Inside,
+        );
+        self.painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "Repeat",
+            FontId::proportional(14.0),
+            Color32::BLACK,
+        );
+    }
+
+    fn render_jump_vamp(&self, location: u16, destination: u16) {
+        let rect = self.lane_rect(2, destination.into(), location.into());
+        self.painter.rect(
+            rect,
+            5.0,
+            Color32::YELLOW,
+            Stroke::new(2.0, Color32::YELLOW),
+            egui::StrokeKind::Inside,
+        );
+        self.painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "Vamp",
+            FontId::proportional(14.0),
+            Color32::BLACK,
+        );
+    }
+
+    fn render_jump_skip(&self, location: u16, destination: u16) {
+        if location + 1 == destination {
+            return;
+        }
+        let rect = self.lane_rect(
+            2,
+            location.saturating_add(1).into(),
+            destination.saturating_sub(1).into(),
+        );
+        self.draw_dashed_rect(
+            rect,
+            Stroke::new(2.0, Color32::YELLOW),
+            Color32::YELLOW.gamma_multiply(0.5),
+            10.0,
+        );
+        self.painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "(Skip)",
+            FontId::proportional(14.0),
+            Color32::BLACK,
+        );
     }
 
     fn try_zoom(&self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
@@ -572,6 +755,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     }
     tlr.render_ruler(show_individual_beats);
     tlr.draw_lane_separators(stroke);
+    tlr.render_jumps();
     //tlr.background(app, ui);
 
     //tlr.jumps(app, ui);
