@@ -1,4 +1,7 @@
-use crate::{actions::{self, Action}, clip::ClipManager};
+use crate::{
+    actions::{self, Action},
+    clip::ClipManager,
+};
 use common::cue::Show;
 use egui::{Context, FontFamily, Vec2};
 use serde::{Deserialize, Serialize};
@@ -71,7 +74,8 @@ impl ProjectFile {
         }
 
         // Serialize show into show.bin
-        let res = postcard::to_stdvec::<Show>(&self.show).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let res = postcard::to_stdvec::<Show>(&self.show)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(path.join("show.bin"), &res)?;
 
         Ok(())
@@ -114,7 +118,7 @@ impl ProjectFile {
 
         // Serialize show into show.json
         let res = serde_json::to_string::<Show>(&self.show)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         std::fs::write(path, res)?;
 
         Ok(())
@@ -152,7 +156,7 @@ impl Default for ClicksEditorApp {
             proportional_beat_length: false,
             left_display_select: DisplaySelect::Cues,
             clip_manager: ClipManager::default(),
-            last_action: None
+            last_action: None,
         }
     }
 }
@@ -161,7 +165,7 @@ impl ClicksEditorApp {
     pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
     /// Called once before the first frame.
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Box<Self> {
+    pub fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Box<Self> {
         let mut a: Box<ClicksEditorApp> = if false && let Some(storage) = cc.storage {
             serde_json::from_str(
                 &eframe::Storage::get_string(storage, eframe::APP_KEY).unwrap_or_default(),
@@ -173,7 +177,11 @@ impl ClicksEditorApp {
         a.ctx = cc.egui_ctx.clone();
         egui_extras::install_image_loaders(&a.ctx);
         a.setup_custom_fonts(&a.ctx);
-        let _ = a.project_file.load(a.project_file.path.clone());
+        if let Some(path) = path {
+            let _ = a.project_file.load(path);
+        } else {
+            let _ = a.project_file.load(a.project_file.path.clone());
+        }
 
         (actions::action("show:refresh_audio_clips").function)(&mut a);
 
@@ -204,14 +212,14 @@ impl ClicksEditorApp {
 
     fn check_hotkeys(&mut self, ui: &mut egui::Ui) {
         for action in actions::all_actions() {
-            if let Some(hotkey) = action.hotkey &&
-                !ui.ctx().wants_keyboard_input() &&
-                    ui
+            if let Some(hotkey) = action.hotkey
+                && !ui.ctx().wants_keyboard_input()
+                && ui
                     .input(|i| i.modifiers == hotkey.modifiers && i.key_pressed(hotkey.logical_key))
-                    && (action.interactible)(self)
-                {
-                    action.run(self)
-                }
+                && (action.interactible)(self)
+            {
+                action.run(self)
+            }
         }
     }
 }

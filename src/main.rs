@@ -12,6 +12,8 @@ mod panel;
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 pub fn main() -> eframe::Result {
+    use std::env;
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1920.0, 1080.0])
@@ -23,9 +25,11 @@ pub fn main() -> eframe::Result {
         ..Default::default()
     };
 
+    let path = env::args().collect::<Vec<String>>()[1];
+
     eframe::run_native(
         "eframe template",
         native_options,
-        Box::new(|cc| Ok(app::ClicksEditorApp::new(cc))),
+        Box::new(|cc| Ok(app::ClicksEditorApp::new(cc, Some(path)))),
     )
 }
