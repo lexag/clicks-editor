@@ -545,10 +545,14 @@ impl TimelineRenderer {
             rect.left_center(),
             self.style.text_color(),
             self.style.window_stroke,
-            self.style.faint_bg_color,
+            self.style.extreme_bg_color,
             12.0,
             tempo.to_string(),
         );
+    }
+
+    fn render_edit_head(&self, position: f32) {
+        self.draw_vertical_line(position, 2, 34, self.style.widgets.active.bg_stroke);
     }
 
     fn try_zoom(&self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
@@ -954,8 +958,26 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     tlr.render_ruler(show_individual_beats);
     tlr.draw_lane_separators(stroke);
     tlr.render_regions();
+    tlr.render_edit_head(ui.ctx().animate_value_with_time(
+        "edit_cursor_x_location".into(),
+        tlr.x(app.selected_beat_idx),
+        0.05,
+    ));
     tlr.render_jumps();
     tlr.render_tempo_changes();
+
+    const DEADZONE: f32 = 150.0;
+    if tlr.x(app.selected_beat_idx) > tlr.right() - DEADZONE {
+        app.pan += Vec2::RIGHT * (tlr.x(app.selected_beat_idx) - tlr.right() + DEADZONE)
+            / ui.style().animation_time
+            * 0.02
+    }
+    if tlr.x(app.selected_beat_idx) < tlr.left() + DEADZONE {
+        app.pan += Vec2::RIGHT * (tlr.x(app.selected_beat_idx) - tlr.left() - DEADZONE)
+            / ui.style().animation_time
+            * 0.02
+    }
+
     //tlr.background(app, ui);
 
     //tlr.jumps(app, ui);
