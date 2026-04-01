@@ -124,6 +124,10 @@ impl TimelineRenderer {
         self.resp.rect
     }
 
+    fn last_beat(&self) -> usize {
+        self.cue.beats.len().saturating_sub(1)
+    }
+
     fn x_size(&self, idx: usize) -> f32 {
         self.beat_width_from_length(self.cue.beats[idx].length)
     }
@@ -297,7 +301,7 @@ impl TimelineRenderer {
     fn draw_beat_separators(&self, stroke: Stroke) {
         for i in 0..self.cue.beats.len() {
             let x = self.x(i);
-            self.draw_vertical_line(x, 0, 3, stroke);
+            self.draw_vertical_line(x, 1, 1, stroke);
             self.draw_vertical_line(x, 5, 34, stroke);
         }
     }
@@ -306,7 +310,7 @@ impl TimelineRenderer {
         for (i, beat) in self.cue.beats.iter().enumerate() {
             if beat.count == 1 {
                 let x = self.x(i);
-                self.draw_vertical_line(x, 0, 3, stroke);
+                self.draw_vertical_line(x, 1, 1, stroke);
                 self.draw_vertical_line(x, 5, 34, stroke);
             }
         }
@@ -335,7 +339,7 @@ impl TimelineRenderer {
                 }
                 self.lane_rect(1, i, region.1 as usize)
             } else {
-                self.lane_rect(1, i, self.cue.beats.len() - 1)
+                self.lane_rect(1, i, self.last_beat())
             };
 
             if beats || (beat.count == 1 && dist_since_last >= MIN_POINTS_PER_STEP) {
@@ -481,6 +485,44 @@ impl TimelineRenderer {
             14.0,
             "(Skip)",
             Color32::WHITE,
+            TextFit::Hide,
+        );
+    }
+
+    fn render_tempo_changes(&self) {
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::TempoChangeEvent { tempo }) = event.event {
+                self.render_tempo_change(event.location, tempo);
+            } else if let Some(EventDescription::GradualTempoChangeEvent {
+                start_tempo,
+                end_tempo,
+                length,
+            }) = event.event
+            {
+                self.draw_dashed_rect(
+                    self.lane_rect(
+                        2,
+                        event.location as usize,
+                        event.location as usize + length as usize - 1,
+                    ),
+                    self.style.window_stroke,
+                    self.style.window_stroke.color,
+                    10.0,
+                );
+                self.render_tempo_change(event.location, start_tempo);
+                self.render_tempo_change(event.location + length, end_tempo);
+            }
+        }
+    }
+
+    fn render_tempo_change(&self, location: u16, tempo: u16) {
+        let rect = self.lane_rect(2, location as usize, self.last_beat());
+        self.draw_fit_text(
+            rect,
+            Align2::LEFT_CENTER,
+            12.0,
+            tempo.to_string(),
+            self.style.text_color(),
             TextFit::Hide,
         );
     }
@@ -889,6 +931,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     tlr.draw_lane_separators(stroke);
     tlr.render_regions();
     tlr.render_jumps();
+    tlr.render_tempo_changes();
     //tlr.background(app, ui);
 
     //tlr.jumps(app, ui);
