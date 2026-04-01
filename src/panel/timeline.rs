@@ -232,6 +232,26 @@ impl TimelineRenderer {
         }
     }
 
+    fn draw_text_in_box(
+        &self,
+        pos: Pos2,
+        color: Color32,
+        stroke: Stroke,
+        fill: Color32,
+        size: f32,
+        text: impl Into<String>,
+    ) {
+        let text: String = text.into();
+
+        let needed_size = self.calculate_text_size(size, &text) + Vec2::splat(size * 0.5);
+        let rect = Rect::from_center_size(pos + needed_size * vec2(0.5, 0.0), needed_size);
+
+        self.painter
+            .rect(rect, 0.0, fill, stroke, egui::StrokeKind::Inside);
+
+        self.draw_fit_text(rect, Align2::LEFT_CENTER, size, text, color, TextFit::Hide);
+    }
+
     fn draw_fit_text(
         &self,
         rect: Rect,
@@ -243,10 +263,7 @@ impl TimelineRenderer {
     ) -> bool {
         let text: String = text.into();
 
-        let galley = self
-            .painter
-            .layout_no_wrap(text.clone(), FontId::proportional(size), c);
-        let needed_size = galley.size();
+        let needed_size = self.calculate_text_size(size, &text);
         //let actual_rect = Rect::from_min_max(align.anchor_rect(rect).min, rect.max);
         let fits_x = needed_size.x <= rect.size().x;
         let fits_y = needed_size.y <= rect.size().y;
@@ -255,7 +272,7 @@ impl TimelineRenderer {
 
         let inset_dir = (pos - rect.center()).normalized();
 
-        pos -= inset_dir * size * 0.5;
+        pos -= inset_dir * size * 0.25;
 
         if (fits_x && fits_y) || fit == TextFit::Ignore {
             self.painter
@@ -281,6 +298,13 @@ impl TimelineRenderer {
         // TODO: implement truncate
 
         false
+    }
+
+    fn calculate_text_size(&self, size: f32, text: &String) -> Vec2 {
+        let galley =
+            self.painter
+                .layout_no_wrap(text.clone(), FontId::proportional(size), Color32::MAGENTA);
+        galley.size()
     }
 
     fn draw_vertical_line(&self, x: f32, lane_start: usize, lane_end: usize, stroke: Stroke) {
@@ -517,13 +541,13 @@ impl TimelineRenderer {
 
     fn render_tempo_change(&self, location: u16, tempo: u16) {
         let rect = self.lane_rect(2, location as usize, self.last_beat());
-        self.draw_fit_text(
-            rect,
-            Align2::LEFT_CENTER,
+        self.draw_text_in_box(
+            rect.left_center(),
+            self.style.text_color(),
+            self.style.window_stroke,
+            self.style.faint_bg_color,
             12.0,
             tempo.to_string(),
-            self.style.text_color(),
-            TextFit::Hide,
         );
     }
 
