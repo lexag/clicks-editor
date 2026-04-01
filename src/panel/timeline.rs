@@ -138,7 +138,7 @@ impl TimelineRenderer {
         for beat in &self.cue.beats[0..idx] {
             offs += self.beat_width_from_length(beat.length);
         }
-        self.resp.rect.min.x + offs - self.pan.x
+        self.resp.rect.min.x + offs - self.pan.x + Self::TRACK_PANEL_WIDTH
     }
     fn x_mid(&self, idx: usize) -> f32 {
         self.x(idx) + self.x_size(idx) * 0.5
@@ -169,8 +169,10 @@ impl TimelineRenderer {
         self.y(idx) + self.y_size(idx)
     }
 
+    const TRACK_PANEL_WIDTH: f32 = 200.0;
+
     fn left(&self) -> f32 {
-        self.resp.rect.left()
+        self.resp.rect.left() + Self::TRACK_PANEL_WIDTH
     }
     fn right(&self) -> f32 {
         self.resp.rect.right()
@@ -619,6 +621,69 @@ impl TimelineRenderer {
         );
     }
 
+    fn render_lane_list(&self) {
+        for (i, text) in [
+            "Regions",
+            "Beat ruler",
+            "Tempo",
+            "Jumps & Repeats",
+            "SMPTE Time",
+            "Playback channel 1",
+            "Playback channel 2",
+            "Playback channel 3",
+            "Playback channel 4",
+            "Playback channel 5",
+            "Playback channel 6",
+            "Playback channel 7",
+            "Playback channel 8",
+            "Playback channel 9",
+            "Playback channel 10",
+            "Playback channel 11",
+            "Playback channel 12",
+            "Playback channel 13",
+            "Playback channel 14",
+            "Playback channel 15",
+            "Playback channel 16",
+            "Playback channel 17",
+            "Playback channel 18",
+            "Playback channel 19",
+            "Playback channel 20",
+            "Playback channel 21",
+            "Playback channel 22",
+            "Playback channel 23",
+            "Playback channel 24",
+            "Playback channel 25",
+            "Playback channel 26",
+            "Playback channel 27",
+            "Playback channel 28",
+            "Playback channel 29",
+            "Playback channel 30",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let rect = Rect::from_min_max(
+                pos2(self.resp.rect.min.x, self.y(i)),
+                pos2(self.left(), self.y_end(i)),
+            );
+            self.painter.rect(
+                rect,
+                0.0,
+                self.style.window_fill,
+                self.style.window_stroke,
+                egui::StrokeKind::Inside,
+            );
+            self.draw_fit_text(
+                rect,
+                Align2::RIGHT_CENTER,
+                12.0,
+                *text,
+                self.style.text_color(),
+                TextFit::Hide,
+            );
+        }
+    }
+
     fn try_zoom(&self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
         if ui.rect_contains_pointer(self.resp.rect) {
             let zoom_step = ui.input(|i| i.zoom_delta());
@@ -626,6 +691,8 @@ impl TimelineRenderer {
             app.pan.x *= zoom_step;
             app.pan -= ui.input(|i| i.smooth_scroll_delta);
         }
+
+        app.pan = app.pan.clamp(vec2(0.0, 0.0), Vec2::INFINITY);
     }
 
     fn beat_width_from_length(&self, length: u32) -> f32 {
@@ -1049,6 +1116,8 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
             / ui.style().animation_time
             * 0.02
     }
+
+    tlr.render_lane_list();
 
     //tlr.background(app, ui);
 
