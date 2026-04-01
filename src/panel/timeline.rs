@@ -5,7 +5,7 @@ use common::{
 };
 use egui::{
     Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, Shape, Stroke, Style,
-    TextWrapMode, Vec2, Visuals, pos2, vec2,
+    TextWrapMode, Vec2, Visuals, lerp, pos2, vec2,
 };
 
 #[derive(Clone)]
@@ -55,7 +55,7 @@ struct TimelineRenderer {
     regions: Vec<(u16, u16, String)>,
     pan: Vec2,
     base_beat_width: f32,
-    proportional_scaling: bool,
+    proportional_scaling: f32,
     beat_idx: i32,
     time_head: i64,
     running_clips: Vec<RunningClip>,
@@ -74,6 +74,7 @@ impl TimelineRenderer {
         ui: &mut egui::Ui,
         cue: Cue,
         persistent: TimelinePersistent,
+        proportional_scaling: f32,
     ) -> Self {
         let (resp, p) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
         Self {
@@ -84,7 +85,7 @@ impl TimelineRenderer {
             pan: app.pan,
             time_head: 0,
             base_beat_width: app.zoom,
-            proportional_scaling: app.proportional_beat_length,
+            proportional_scaling,
             beat_idx: -1,
             running_clips: vec![],
             persistent,
@@ -132,15 +133,11 @@ impl TimelineRenderer {
         self.beat_width_from_length(self.cue.beats[idx].length)
     }
     fn x(&self, idx: usize) -> f32 {
-        if self.proportional_scaling {
-            let mut offs = 0.0;
-            for beat in &self.cue.beats[0..idx] {
-                offs += self.beat_width_from_length(beat.length);
-            }
-            self.resp.rect.min.x + offs - self.pan.x
-        } else {
-            self.resp.rect.min.x + self.base_beat_width * idx as f32 - self.pan.x
+        let mut offs = 0.0;
+        for beat in &self.cue.beats[0..idx] {
+            offs += self.beat_width_from_length(beat.length);
         }
+        self.resp.rect.min.x + offs - self.pan.x
     }
     fn x_mid(&self, idx: usize) -> f32 {
         self.x(idx) + self.x_size(idx) * 0.5
@@ -565,11 +562,11 @@ impl TimelineRenderer {
     }
 
     fn beat_width_from_length(&self, length: u32) -> f32 {
-        if self.proportional_scaling {
-            self.base_beat_width * length as f32 / 500000.0
-        } else {
-            self.base_beat_width
-        }
+        let mult = lerp(
+            1.0..=length as f32 / 500000.0_f32,
+            self.proportional_scaling,
+        );
+        self.base_beat_width * mult
     }
 
     //fn bar_numbers(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
@@ -945,7 +942,14 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     }
 
     let persistent = TimelinePersistent::default();
-    let mut tlr = TimelineRenderer::new(app, ui, cue, persistent);
+    let mut tlr = TimelineRenderer::new(
+        app,
+        ui,
+        cue,
+        persistent,
+        app.ctx
+            .animate_bool("proportional_scaling".into(), app.proportional_beat_length),
+    );
 
     let stroke = ui.style().visuals.widgets.noninteractive.bg_stroke;
 
