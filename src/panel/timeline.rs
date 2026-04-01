@@ -18,6 +18,13 @@ struct RunningClip {
 
 const NUM_LANES: usize = 35;
 
+// rehearsal marks
+// bar.beat ruler
+// tempo changes
+// jumps/vamps
+// LTC ruler
+// playback x30
+
 struct TimelinePersistent {
     lane_heights: Vec<(f32, f32)>,
     lane_collapsed: Vec<bool>,
