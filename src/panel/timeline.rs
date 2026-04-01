@@ -2,10 +2,11 @@ use crate::app::ClicksEditorApp;
 use common::{
     cue::Cue,
     event::{EventDescription, JumpModeChange, JumpRequirement},
+    mem::smpte::TimecodeInstant,
 };
 use egui::{
     Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, Shape, Stroke, Style,
-    TextWrapMode, Vec2, Visuals, lerp, pos2, vec2,
+    TextWrapMode, Vec2, Visuals, epaint::text::cursor, lerp, pos2, vec2,
 };
 
 #[derive(Clone)]
@@ -448,7 +449,7 @@ impl TimelineRenderer {
     }
 
     fn render_jump_repeat(&self, location: u16, destination: u16) {
-        let rect = self.lane_rect(2, destination.into(), location.into());
+        let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
             5.0,
@@ -467,7 +468,7 @@ impl TimelineRenderer {
     }
 
     fn render_jump_vamp(&self, location: u16, destination: u16) {
-        let rect = self.lane_rect(2, destination.into(), location.into());
+        let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
             5.0,
@@ -490,7 +491,7 @@ impl TimelineRenderer {
             return;
         }
         let rect = self.lane_rect(
-            2,
+            3,
             location.saturating_add(1).into(),
             destination.saturating_sub(1).into(),
         );
@@ -550,6 +551,72 @@ impl TimelineRenderer {
 
     fn render_edit_head(&self, position: f32) {
         self.draw_vertical_line(position, 2, 34, self.style.widgets.active.bg_stroke);
+    }
+
+    fn render_ltc_events(&self, cursor_pos: usize) {
+        let mut time_at_cursor = TimecodeInstant::new(25);
+        let mut prev_pos = u16::MAX;
+        let mut last_before_cursor = 0;
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::TimecodeEvent { time, properties }) = event.event {
+                if (event.location as usize) < cursor_pos {
+                    time_at_cursor = time;
+                    last_before_cursor = event.location as usize;
+                }
+                if prev_pos != u16::MAX {
+                    self.draw_dashed_rect(
+                        self.lane_rect(4, prev_pos as usize, event.location as usize - 1),
+                        self.style.window_stroke,
+                        self.style.window_stroke.color,
+                        10.0,
+                    );
+                }
+                prev_pos = event.location;
+            } else if let Some(EventDescription::TimecodeStopEvent) = event.event {
+                if prev_pos != u16::MAX {
+                    self.draw_dashed_rect(
+                        self.lane_rect(4, prev_pos as usize, event.location as usize - 1),
+                        self.style.window_stroke,
+                        self.style.window_stroke.color,
+                        10.0,
+                    );
+                }
+                prev_pos = u16::MAX;
+            }
+        }
+
+        if prev_pos != u16::MAX {
+            self.draw_dashed_rect(
+                self.lane_rect(4, prev_pos as usize, self.last_beat()),
+                self.style.window_stroke,
+                self.style.window_stroke.color,
+                10.0,
+            );
+        }
+
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::TimecodeEvent { time, properties }) = event.event {
+                self.render_timestamp(event.location, time);
+            }
+        }
+
+        if prev_pos != u16::MAX {
+            for beat in &self.cue.beats[last_before_cursor..cursor_pos] {
+                time_at_cursor.add_us(beat.length.into());
+            }
+        }
+        self.render_timestamp(cursor_pos as u16, time_at_cursor);
+    }
+
+    fn render_timestamp(&self, location: u16, time: TimecodeInstant) {
+        self.draw_text_in_box(
+            pos2(self.x(location as usize), self.y_mid(4)),
+            self.style.text_color(),
+            self.style.window_stroke,
+            self.style.extreme_bg_color,
+            12.0,
+            time.to_string(),
+        );
     }
 
     fn try_zoom(&self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
@@ -962,6 +1029,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     tlr.render_ruler(show_individual_beats);
     tlr.draw_lane_separators(stroke);
     tlr.render_regions();
+    tlr.render_ltc_events(app.selected_beat_idx);
     tlr.render_edit_head(ui.ctx().animate_value_with_time(
         "edit_cursor_x_location".into(),
         tlr.x(app.selected_beat_idx),
