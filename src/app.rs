@@ -1,6 +1,6 @@
 use crate::{actions::{self, Action}, clip::ClipManager};
 use common::cue::Show;
-use egui::{Context, FontFamily};
+use egui::{Context, FontFamily, Vec2};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, default, path::PathBuf};
 
@@ -12,6 +12,7 @@ pub struct ClicksEditorApp {
     pub ctx: Context,
     pub selected_cue_idx: usize,
     pub selected_beat_idx: usize,
+    pub pan: Vec2,
     pub zoom: f32,
     pub proportional_beat_length: bool,
     pub left_display_select: DisplaySelect,
@@ -146,6 +147,7 @@ impl Default for ClicksEditorApp {
             project_file: ProjectFile::default(),
             selected_cue_idx: 0,
             selected_beat_idx: 0,
+            pan: Vec2::splat(0.0),
             zoom: 10.0,
             proportional_beat_length: false,
             left_display_select: DisplaySelect::Cues,

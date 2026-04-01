@@ -72,7 +72,7 @@ impl TimelineRenderer {
             painter: p,
             resp,
             cue,
-            pan: vec2(0.0, 0.0),
+            pan: app.pan,
             time_head: 0,
             base_beat_width: app.zoom,
             proportional_scaling: app.proportional_beat_length,
@@ -88,8 +88,11 @@ impl TimelineRenderer {
     }
     fn x(&self, idx: usize) -> f32 {
         if self.proportional_scaling {
-            // TODO: handle
-            0.0
+            let mut offs = 0.0;
+            for beat in &self.cue.beats[0..idx] {
+                offs += self.beat_width_from_length(beat.length);
+            }
+            self.resp.rect.min.x + offs - self.pan.x
         } else {
             self.resp.rect.min.x + self.base_beat_width * idx as f32 - self.pan.x
         }
@@ -431,7 +434,10 @@ impl TimelineRenderer {
 
     fn try_zoom(&self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
         if ui.rect_contains_pointer(self.resp.rect) {
-            app.zoom *= ui.input(|i| i.zoom_delta());
+            let zoom_step = ui.input(|i| i.zoom_delta());
+            app.zoom *= zoom_step;
+            app.pan.x *= zoom_step;
+            app.pan -= ui.input(|i| i.smooth_scroll_delta);
         }
     }
 
