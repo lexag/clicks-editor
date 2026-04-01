@@ -105,6 +105,25 @@ impl TimelineRenderer {
         regions
     }
 
+    fn calculate_region_for_beat(&self, beat: usize) -> Option<(u16, u16, String)> {
+        for region in &self.regions {
+            if ((region.0 as usize) < beat) && (beat < region.1 as usize) {
+                return Some(region.clone());
+            }
+        }
+        None
+    }
+
+    fn calculate_region_rect(&self, beat: usize) -> Rect {
+        if let Some(region) = self.calculate_region_for_beat(beat) {
+            return Rect::from_min_max(
+                pos2(self.x(region.0 as usize), self.top()),
+                pos2(self.x_end(region.1 as usize), self.bottom()),
+            );
+        }
+        self.resp.rect
+    }
+
     fn x_size(&self, idx: usize) -> f32 {
         self.beat_width_from_length(self.cue.beats[idx].length)
     }
@@ -309,22 +328,28 @@ impl TimelineRenderer {
         let mut dist_since_last = 0.0;
         let mut region_idx = 0;
         for (i, beat) in self.cue.beats.iter().enumerate() {
-            if let Some(region) = self.regions.get(region_idx)
-                && region.0 as usize == i
-            {
-                region_idx += 1;
-                dist_since_last = f32::MAX;
-            }
+            let region_rect = if let Some(region) = self.regions.get(region_idx) {
+                if region.0 as usize == i {
+                    region_idx += 1;
+                    dist_since_last = f32::MAX;
+                }
+                self.lane_rect(1, i, region.1 as usize)
+            } else {
+                self.lane_rect(1, i, self.cue.beats.len() - 1)
+            };
 
             if beats || (beat.count == 1 && dist_since_last >= MIN_POINTS_PER_STEP) {
-                self.draw_header(
-                    i,
-                    1,
+                self.draw_fit_text(
+                    region_rect,
+                    Align2::LEFT_CENTER,
+                    11.0,
                     if beats {
                         format!("{}.{}", beat.bar_number, beat.count)
                     } else {
                         format!("{}", beat.bar_number)
                     },
+                    self.style.strong_text_color(),
+                    TextFit::Hide,
                 );
                 dist_since_last = 0.0;
             }
@@ -862,8 +887,8 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     }
     tlr.render_ruler(show_individual_beats);
     tlr.draw_lane_separators(stroke);
-    tlr.render_jumps();
     tlr.render_regions();
+    tlr.render_jumps();
     //tlr.background(app, ui);
 
     //tlr.jumps(app, ui);
