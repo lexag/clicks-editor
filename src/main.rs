@@ -12,7 +12,7 @@ mod panel;
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 pub fn main() -> eframe::Result {
-    use std::env;
+    use std::{env, path::PathBuf};
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -25,11 +25,12 @@ pub fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    let path = env::args().collect::<Vec<String>>()[1];
+    let args = env::args().collect::<Vec<String>>();
+    let path = args.get(1).clone();
 
     eframe::run_native(
         "eframe template",
         native_options,
-        Box::new(|cc| Ok(app::ClicksEditorApp::new(cc, Some(path)))),
+        Box::new(|cc| Ok(app::ClicksEditorApp::new(cc, path.map(PathBuf::from)))),
     )
 }

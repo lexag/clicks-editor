@@ -4,8 +4,8 @@ use common::{
     event::{EventDescription, JumpModeChange, JumpRequirement},
 };
 use egui::{
-    pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, Shape,
-    Stroke, Style, TextWrapMode, Vec2, Visuals,
+    Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, Shape, Stroke, Style,
+    TextWrapMode, Vec2, Visuals, pos2, vec2,
 };
 
 #[derive(Clone)]
@@ -52,6 +52,7 @@ struct TimelineRenderer {
     resp: Response,
     painter: Painter,
     cue: Cue,
+    regions: Vec<(u16, u16, String)>,
     pan: Vec2,
     base_beat_width: f32,
     proportional_scaling: bool,
@@ -77,6 +78,7 @@ impl TimelineRenderer {
         let (resp, p) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
         Self {
             painter: p,
+            regions: Self::calculate_regions(&cue),
             resp,
             cue,
             pan: app.pan,
@@ -88,6 +90,19 @@ impl TimelineRenderer {
             persistent,
             style: ui.style().visuals.clone(),
         }
+    }
+
+    fn calculate_regions(cue: &Cue) -> Vec<(u16, u16, String)> {
+        let mut regions: Vec<(u16, u16, String)> = vec![];
+        for event in cue.events.iter() {
+            if let Some(EventDescription::RehearsalMarkEvent { label }) = event.event {
+                if let Some(last) = regions.last_mut() {
+                    last.1 = event.location.saturating_sub(1);
+                }
+                regions.push((event.location, 0, label.str().to_string()));
+            }
+        }
+        regions
     }
 
     fn x_size(&self, idx: usize) -> f32 {
@@ -225,23 +240,22 @@ impl TimelineRenderer {
             return true;
         }
 
-        match fit {
-            TextFit::Shrink => {
-                let max = if fits_x { rect.size().y } else { rect.size().x };
+        if fit == TextFit::Shrink {
+            let max = if fits_x { rect.size().y } else { rect.size().x };
 
-                let overrun = (needed_size - rect.size()).max_elem();
-                let scale_factor = max / overrun;
+            let overrun = (needed_size - rect.size()).max_elem();
+            let scale_factor = max / overrun;
 
-                self.painter.text(
-                    pos,
-                    align,
-                    text,
-                    FontId::proportional(size * scale_factor),
-                    c,
-                );
-            }
-            _ => {}
+            self.painter.text(
+                pos,
+                align,
+                text,
+                FontId::proportional(size * scale_factor),
+                c,
+            );
         }
+
+        // TODO: implement truncate
 
         false
     }
@@ -281,8 +295,8 @@ impl TimelineRenderer {
 
     fn draw_header(&self, beat: usize, lane: usize, text: String) {
         self.painter.text(
-            pos2(self.x(beat), self.y(lane)),
-            Align2::LEFT_TOP,
+            pos2(self.x(beat), self.y_mid(lane)),
+            Align2::LEFT_CENTER,
             text,
             FontId::proportional(11.0),
             self.style.strong_text_color(),
@@ -290,29 +304,36 @@ impl TimelineRenderer {
     }
 
     pub fn render_ruler(&self, beats: bool) {
-        const AIM_FOR_NUM_BARS: usize = 20;
-        let points_per_bar = self.resp.rect.width() / AIM_FOR_NUM_BARS as f32;
-        let 
+        const MIN_POINTS_PER_STEP: f32 = 50.0;
 
+        let mut dist_since_last = 0.0;
+        let mut region_idx = 0;
         for (i, beat) in self.cue.beats.iter().enumerate() {
-            if beats || beat.count == 1 || (beat.bar_number - 1) % every_x_bars == 0 {
-                self.draw_header(i, 1, format!("{}.{}", beat.bar_number, beat.count));
+            if let Some(region) = self.regions.get(region_idx)
+                && region.0 as usize == i
+            {
+                region_idx += 1;
+                dist_since_last = f32::MAX;
             }
+
+            if beats || (beat.count == 1 && dist_since_last >= MIN_POINTS_PER_STEP) {
+                self.draw_header(
+                    i,
+                    1,
+                    if beats {
+                        format!("{}.{}", beat.bar_number, beat.count)
+                    } else {
+                        format!("{}", beat.bar_number)
+                    },
+                );
+                dist_since_last = 0.0;
+            }
+            dist_since_last += self.beat_width_from_length(beat.length);
         }
     }
 
     pub fn render_regions(&self) {
-        let mut regions: Vec<(u16, u16, String)> = vec![];
-        for event in self.cue.events.iter() {
-            if let Some(EventDescription::RehearsalMarkEvent { label }) = event.event {
-                if let Some(last) = regions.last_mut() {
-                    last.1 = event.location.saturating_sub(1);
-                }
-                regions.push((event.location, 0, label.str().to_string()));
-            }
-        }
-
-        for region in regions {
+        for region in &self.regions {
             let rect = self.lane_rect(0, region.0.into(), region.1.into());
 
             let stroke = Stroke::new(1.0, self.style.text_color());
@@ -329,7 +350,7 @@ impl TimelineRenderer {
                 rect,
                 Align2::LEFT_CENTER,
                 14.0,
-                region.2,
+                region.2.clone(),
                 self.style.text_color(),
                 TextFit::Hide,
             );
