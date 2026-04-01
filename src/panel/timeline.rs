@@ -5,7 +5,7 @@ use common::{
 };
 use egui::{
     pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, Shape,
-    Stroke, Style, Vec2, Visuals,
+    Stroke, Style, TextWrapMode, Vec2, Visuals,
 };
 
 #[derive(Clone)]
@@ -30,6 +30,14 @@ impl Default for TimelinePersistent {
             lane_collapsed: vec![true; NUM_LANES],
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum TextFit {
+    Truncate,
+    Shrink,
+    Hide,
+    Ignore,
 }
 
 struct TimelineRenderer {
@@ -176,37 +184,57 @@ impl TimelineRenderer {
         }
     }
 
-    //fn draw_dashed_rect(
-    //    &self,
-    //    rect: Rect,
-    //    stroke: Stroke,
-    //    fill: Color32,
-    //    corner_radius: impl Into<CornerRadius> + Copy,
-    //    spacing_multiplier: f32,
-    //) {
-    //    self.painter
-    //        .rect_stroke(rect, corner_radius, stroke, egui::StrokeKind::Inside);
-    //    let cr: CornerRadius = corner_radius.into();
-    //    let line_dist = cr.average() * spacing_multiplier;
-    //    let num_lines = ((rect.height() + rect.width()) / line_dist) as usize;
-    //    for i in 0..num_lines {
-    //        let distance_along = (i + 1) as f32 * (line_dist);
-    //        let x1_off = distance_along % rect.width();
-    //        let y1_off = distance_along - x1_off;
-    //        let leg_len = (rect.height() - y1_off).min(rect.width() - x1_off);
-    //        let x1 = rect.min.x + x1_off;
-    //        let y1 = rect.min.y + y1_off;
-    //        let x2 = x1 + leg_len;
-    //        let y2 = y1 + leg_len;
-    //        let a = pos2(x1, y1);
-    //        let b = pos2(x2, y2);
-    //        self.painter.circle_filled(a, 5.0, Color32::GREEN);
-    //        self.painter.circle_filled(b, 5.0, Color32::RED);
+    fn draw_fit_text(
+        &self,
+        rect: Rect,
+        align: Align2,
+        size: f32,
+        text: impl Into<String>,
+        c: Color32,
+        fit: TextFit,
+    ) -> bool {
+        let text: String = text.into();
 
-    //        self.painter
-    //            .line_segment([a, b], Stroke::new(stroke.width, fill));
-    //    }
-    //}
+        let galley = self
+            .painter
+            .layout_no_wrap(text.clone(), FontId::proportional(size), c);
+        let needed_size = galley.size();
+        //let actual_rect = Rect::from_min_max(align.anchor_rect(rect).min, rect.max);
+        let fits_x = needed_size.x <= rect.size().x;
+        let fits_y = needed_size.y <= rect.size().y;
+
+        let mut pos = align.pos_in_rect(&rect);
+
+        let inset_dir = (pos - rect.center()).normalized();
+
+        pos -= inset_dir * size * 0.5;
+
+        if (fits_x && fits_y) || fit == TextFit::Ignore {
+            self.painter
+                .text(pos, align, text, FontId::proportional(size), c);
+            return true;
+        }
+
+        match fit {
+            TextFit::Shrink => {
+                let max = if fits_x { rect.size().y } else { rect.size().x };
+
+                let overrun = (needed_size - rect.size()).max_elem();
+                let scale_factor = max / overrun;
+
+                self.painter.text(
+                    pos,
+                    align,
+                    text,
+                    FontId::proportional(size * scale_factor),
+                    c,
+                );
+            }
+            _ => {}
+        }
+
+        false
+    }
 
     fn draw_vertical_line(&self, x: f32, lane_start: usize, lane_end: usize, stroke: Stroke) {
         self.painter.line_segment(
@@ -247,15 +275,57 @@ impl TimelineRenderer {
             Align2::LEFT_TOP,
             text,
             FontId::proportional(11.0),
-            self.style.text_color(),
+            self.style.strong_text_color(),
         );
     }
 
     pub fn render_ruler(&self, beats: bool) {
+        const AIM_FOR_NUM_BARS: usize = 20;
+        let points_per_bar = self.resp.rect.width() / AIM_FOR_NUM_BARS as f32;
+        let 
+
         for (i, beat) in self.cue.beats.iter().enumerate() {
-            if beats || beat.count == 1 {
+            if beats || beat.count == 1 || (beat.bar_number - 1) % every_x_bars == 0 {
                 self.draw_header(i, 1, format!("{}.{}", beat.bar_number, beat.count));
             }
+        }
+    }
+
+    pub fn render_regions(&self) {
+        let mut regions: Vec<(u16, u16, String)> = vec![];
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::RehearsalMarkEvent { label }) = event.event {
+                if let Some(last) = regions.last_mut() {
+                    last.1 = event.location.saturating_sub(1);
+                }
+                regions.push((event.location, 0, label.str().to_string()));
+            }
+        }
+
+        for region in regions {
+            let rect = self.lane_rect(0, region.0.into(), region.1.into());
+
+            let stroke = Stroke::new(1.0, self.style.text_color());
+
+            self.painter.rect(
+                rect,
+                5.0,
+                self.style.code_bg_color,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+
+            self.draw_fit_text(
+                rect,
+                Align2::LEFT_CENTER,
+                14.0,
+                region.2,
+                self.style.text_color(),
+                TextFit::Hide,
+            );
+
+            self.draw_vertical_line(self.x(region.0.into()), 1, 3, stroke);
+            self.draw_vertical_line(self.x(region.0.into()), 5, 34, stroke);
         }
     }
 
@@ -305,12 +375,13 @@ impl TimelineRenderer {
             Stroke::new(2.0, Color32::YELLOW),
             egui::StrokeKind::Inside,
         );
-        self.painter.text(
-            rect.center(),
+        self.draw_fit_text(
+            rect,
             Align2::CENTER_CENTER,
+            14.0,
             "Repeat",
-            FontId::proportional(14.0),
             Color32::BLACK,
+            TextFit::Hide,
         );
     }
 
@@ -323,12 +394,13 @@ impl TimelineRenderer {
             Stroke::new(2.0, Color32::YELLOW),
             egui::StrokeKind::Inside,
         );
-        self.painter.text(
-            rect.center(),
+        self.draw_fit_text(
+            rect,
             Align2::CENTER_CENTER,
+            14.0,
             "Vamp",
-            FontId::proportional(14.0),
             Color32::BLACK,
+            TextFit::Hide,
         );
     }
 
@@ -347,12 +419,13 @@ impl TimelineRenderer {
             Color32::YELLOW.gamma_multiply(0.5),
             10.0,
         );
-        self.painter.text(
-            rect.center(),
+        self.draw_fit_text(
+            rect,
             Align2::CENTER_CENTER,
+            14.0,
             "(Skip)",
-            FontId::proportional(14.0),
-            Color32::BLACK,
+            Color32::WHITE,
+            TextFit::Hide,
         );
     }
 
@@ -756,6 +829,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     tlr.render_ruler(show_individual_beats);
     tlr.draw_lane_separators(stroke);
     tlr.render_jumps();
+    tlr.render_regions();
     //tlr.background(app, ui);
 
     //tlr.jumps(app, ui);
