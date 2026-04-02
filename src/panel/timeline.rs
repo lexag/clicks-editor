@@ -5,9 +5,10 @@ use common::{
     mem::smpte::TimecodeInstant,
 };
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, Shape, Stroke, Style,
-    TextWrapMode, Vec2, Visuals, epaint::text::cursor, lerp, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Painter, Pos2, Rect, Response, Shape,
+    Stroke, Style, TextWrapMode, Vec2, Visuals, epaint::text::cursor, lerp, pos2, vec2,
 };
+use std::hash::{self, Hash, Hasher};
 
 #[derive(Clone)]
 struct RunningClip {
@@ -18,6 +19,7 @@ struct RunningClip {
 }
 
 const NUM_LANES: usize = 35;
+const INTERACTION_HANDLE_SIZE: f32 = 10.0;
 
 // rehearsal marks
 // bar.beat ruler
@@ -48,28 +50,94 @@ enum TextFit {
     Ignore,
 }
 
+type InteractionFunction = Option<Box<dyn Fn(&mut Cue, usize)>>;
+
+pub struct TimelineInteractable {
+    rect: Rect,
+    drag_x: InteractionFunction,
+    drag_y: InteractionFunction,
+    event_idx: Option<usize>,
+    hash: u64,
+}
+
+impl TimelineInteractable {
+    pub fn new(
+        salt: impl Into<String>,
+        rect: Rect,
+        event_idx: usize,
+        drag_x: InteractionFunction,
+        drag_y: InteractionFunction,
+    ) -> Self {
+        Self::new_opt(salt, rect, Some(event_idx), drag_x, drag_y)
+    }
+
+    pub fn new_opt(
+        salt: impl Into<String>,
+        rect: Rect,
+        event_idx: Option<usize>,
+        drag_x: InteractionFunction,
+        drag_y: InteractionFunction,
+    ) -> Self {
+        Self {
+            rect,
+            drag_x,
+            drag_y,
+            event_idx,
+            hash: 0,
+        }
+        .hashed(salt.into())
+    }
+
+    pub fn basic(salt: impl Into<String>, rect: Rect, event_idx: usize) -> Self {
+        Self::new(salt, rect, event_idx, None, None)
+    }
+
+    pub fn drag(
+        salt: impl Into<String>,
+        rect: Rect,
+        drag_x: InteractionFunction,
+        drag_y: InteractionFunction,
+    ) -> Self {
+        Self::new_opt(salt, rect, None, drag_x, drag_y)
+    }
+    pub fn drag_x(salt: impl Into<String>, rect: Rect, drag_x: InteractionFunction) -> Self {
+        Self::new_opt(salt, rect, None, drag_x, None)
+    }
+    pub fn drag_y(salt: impl Into<String>, rect: Rect, drag_y: InteractionFunction) -> Self {
+        Self::new_opt(salt, rect, None, None, drag_y)
+    }
+
+    fn hash(&self, salt: String) -> u64 {
+        let mut h = hash::DefaultHasher::new();
+        self.event_idx.hash(&mut h);
+        self.drag_x.is_some().hash(&mut h);
+        self.drag_y.is_some().hash(&mut h);
+        salt.hash(&mut h);
+        h.finish()
+    }
+
+    fn hashed(self, salt: String) -> Self {
+        Self {
+            hash: self.hash(salt),
+            ..self
+        }
+    }
+}
+
 struct TimelineRenderer {
     style: Visuals,
     resp: Response,
     painter: Painter,
     cue: Cue,
-    regions: Vec<(u16, u16, String)>,
+    regions: Vec<(u16, u16, String, usize)>,
     pan: Vec2,
     base_beat_width: f32,
     proportional_scaling: f32,
-    beat_idx: i32,
-    time_head: i64,
-    running_clips: Vec<RunningClip>,
     persistent: TimelinePersistent,
+    interactions: Vec<TimelineInteractable>,
 }
 
 impl TimelineRenderer {
-    const LANE_HEIGHT: f32 = 15.0;
-    const LANE_BUFFER: f32 = 0.0;
-    const TEXT_SIZE: f32 = 12.0;
-    const TEXT_BUMP: f32 = 12.0 * 0.2;
-    const FONT: FontId = FontId::monospace(Self::TEXT_SIZE);
-
     fn new(
         app: &mut ClicksEditorApp,
         ui: &mut egui::Ui,
@@ -84,30 +152,32 @@ impl TimelineRenderer {
             resp,
             cue,
             pan: app.pan,
-            time_head: 0,
             base_beat_width: app.zoom,
             proportional_scaling,
-            beat_idx: -1,
-            running_clips: vec![],
             persistent,
             style: ui.style().visuals.clone(),
+            interactions: vec![],
         }
     }
 
-    fn calculate_regions(cue: &Cue) -> Vec<(u16, u16, String)> {
-        let mut regions: Vec<(u16, u16, String)> = vec![];
-        for event in cue.events.iter() {
+    fn register_interaction_rect(&mut self, inter: TimelineInteractable) {
+        self.interactions.push(inter);
+    }
+
+    fn calculate_regions(cue: &Cue) -> Vec<(u16, u16, String, usize)> {
+        let mut regions: Vec<(u16, u16, String, usize)> = vec![];
+        for (i, event) in cue.events.iter().enumerate() {
             if let Some(EventDescription::RehearsalMarkEvent { label }) = event.event {
                 if let Some(last) = regions.last_mut() {
                     last.1 = event.location.saturating_sub(1);
                 }
-                regions.push((event.location, 0, label.str().to_string()));
+                regions.push((event.location, 0, label.str().to_string(), i));
             }
         }
         regions
     }
 
-    fn calculate_region_for_beat(&self, beat: usize) -> Option<(u16, u16, String)> {
+    fn calculate_region_for_beat(&self, beat: usize) -> Option<(u16, u16, String, usize)> {
         for region in &self.regions {
             if ((region.0 as usize) < beat) && (beat < region.1 as usize) {
                 return Some(region.clone());
@@ -184,6 +254,24 @@ impl TimelineRenderer {
         self.resp.rect.bottom()
     }
 
+    fn lane_at_y(&self, y: f32) -> usize {
+        for lane in 0..NUM_LANES {
+            if self.y(lane) > y {
+                return lane;
+            }
+        }
+        0
+    }
+
+    fn beat_at_x(&self, x: f32) -> usize {
+        for i in 0..self.cue.beats.len() {
+            if self.x(i) > x {
+                return i;
+            }
+        }
+        0
+    }
+
     fn mm_rect(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Rect {
         Rect::from_min_max(
             self.resp.rect.min + vec2(x1, y1),
@@ -196,6 +284,21 @@ impl TimelineRenderer {
             pos2(self.x(start), self.y(lane)),
             pos2(self.x_end(end), self.y_end(lane)),
         )
+    }
+
+    fn make_edge_rect(&self, rect: Rect, align: Align2) -> Rect {
+        let center = align.pos_in_rect(&rect);
+        let size_x = if align.y() == Align::Center {
+            INTERACTION_HANDLE_SIZE
+        } else {
+            rect.width() + INTERACTION_HANDLE_SIZE
+        };
+        let size_y = if align.x() == Align::Center {
+            INTERACTION_HANDLE_SIZE
+        } else {
+            rect.height() + INTERACTION_HANDLE_SIZE
+        };
+        Rect::from_center_size(center, vec2(size_x, size_y))
     }
 
     fn draw_dashed_rect(&self, rect: Rect, stroke: Stroke, fill: Color32, spacing: f32) {
@@ -385,32 +488,124 @@ impl TimelineRenderer {
         }
     }
 
-    pub fn render_regions(&self) {
-        for region in &self.regions {
+    pub fn render_regions(&mut self) {
+        for region in self.regions.clone() {
             let rect = self.lane_rect(0, region.0.into(), region.1.into());
 
-            let stroke = Stroke::new(1.0, self.style.text_color());
-
-            self.painter.rect(
-                rect,
-                5.0,
-                self.style.code_bg_color,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-
-            self.draw_fit_text(
-                rect,
-                Align2::LEFT_CENTER,
-                14.0,
-                region.2.clone(),
-                self.style.text_color(),
-                TextFit::Hide,
-            );
-
-            self.draw_vertical_line(self.x(region.0.into()), 1, 3, stroke);
-            self.draw_vertical_line(self.x(region.0.into()), 5, 34, stroke);
+            self.render_region(region.2.clone(), rect);
+            self.register_interaction_rect(TimelineInteractable::new(
+                "region_drag",
+                self.make_edge_rect(rect, Align2::LEFT_CENTER),
+                region.3,
+                Some(Box::new(move |cue, beat| {
+                    if let Some(event) = cue.events.get_mut(region.3 as u8) {
+                        event.location = beat as u16;
+                    }
+                })),
+                None,
+            ));
         }
+    }
+
+    fn render_region(&self, label: String, rect: Rect) {
+        let stroke = Stroke::new(1.0, self.style.text_color());
+        self.painter.rect(
+            rect,
+            5.0,
+            self.style.code_bg_color,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+
+        self.draw_fit_text(
+            rect,
+            Align2::LEFT_CENTER,
+            14.0,
+            label,
+            self.style.text_color(),
+            TextFit::Hide,
+        );
+
+        self.draw_vertical_line(rect.left(), 1, 3, stroke);
+        self.draw_vertical_line(rect.left(), 5, 34, stroke);
+    }
+
+    pub fn render_playback(&self) {
+        // (sample offset, clip_idx, start, end)
+        let mut clips = Vec::<Vec<(i32, u16, u16, u16)>>::new();
+        clips.resize_with(32, Vec::new);
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::PlaybackEvent {
+                sample,
+                channel_idx,
+                clip_idx,
+            }) = event.event
+            {
+                if let Some(clip) = clips[channel_idx as usize].last_mut() {
+                    clip.3 = event.location;
+                }
+                clips[channel_idx as usize].push((
+                    sample,
+                    clip_idx,
+                    event.location,
+                    self.last_beat() as u16,
+                ))
+            } else if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event {
+                if let Some(clip) = clips[channel_idx as usize].last_mut() {
+                    clip.3 = event.location;
+                }
+            }
+        }
+
+        for (i, channel) in clips.iter().enumerate() {
+            for clip in channel {
+                self.render_playback_clip(i, clip.0, clip.1, clip.2, clip.3);
+            }
+        }
+
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event {
+                self.render_playback_stop(channel_idx.into(), event.location);
+            }
+        }
+    }
+
+    fn render_playback_clip(
+        &self,
+        channel_idx: usize,
+        sample_offs: i32,
+        clip_idx: u16,
+        start: u16,
+        end: u16,
+    ) {
+        let rect = self.lane_rect(channel_idx + 5, start.into(), (end - 1).into());
+        self.painter.rect(
+            rect,
+            8.0,
+            Color32::BLUE,
+            self.style.window_stroke,
+            egui::StrokeKind::Inside,
+        );
+        self.draw_fit_text(
+            rect,
+            Align2::LEFT_TOP,
+            12.0,
+            format!("Clip #{}", clip_idx),
+            self.style.text_color(),
+            TextFit::Hide,
+        );
+    }
+
+    fn render_playback_stop(&self, channel_idx: usize, location: u16) {
+        let rect = self.lane_rect(channel_idx + 5, location.into(), self.last_beat());
+        self.draw_text_in_box(
+            rect.left_center(),
+            self.style.text_color(),
+            self.style.window_stroke,
+            self.style.window_fill,
+            12.0,
+            "STOP",
+        );
     }
 
     pub fn render_jumps(&self) {
@@ -1061,6 +1256,67 @@ impl TimelineRenderer {
     //        ui.style().visuals.window_fill().gamma_multiply(0.5),
     //    );
     //}
+
+    fn handle_interaction(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
+        let cue = &mut app.project_file.show.cues[app.selected_cue_idx];
+
+        let clicked = ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        });
+        let mouse_just_down = ui.input(|i| i.pointer.primary_pressed());
+        let mouse_down = ui.input(|i| i.pointer.primary_down());
+        let dragged = mouse_down && ui.input(|i| i.pointer.is_moving());
+        let pos = ui.input(|i| i.pointer.interact_pos());
+
+        if !mouse_down {
+            app.current_interaction_hash = 0;
+            cue.events.sort();
+        }
+
+        for interaction in &self.interactions {
+            //self.painter
+            //    .rect_filled(interaction.rect, 0.0, Color32::MAGENTA);
+
+            if let Some(pos) = pos {
+                let mut cursor_change = false;
+                if interaction.rect.contains(pos) {
+                    cursor_change = true;
+
+                    if mouse_just_down {
+                        app.current_interaction_hash = interaction.hash;
+                        break;
+                    }
+
+                    if clicked && let Some(event_idx) = interaction.event_idx {
+                        // TODO: modal with settings
+                    }
+                }
+
+                if interaction.hash == app.current_interaction_hash {
+                    cursor_change = true;
+                    if dragged && let Some(drag_x) = &interaction.drag_x {
+                        let beat = self.beat_at_x(pos.x);
+                        (drag_x)(cue, beat)
+                    }
+                    if dragged && let Some(drag_y) = &interaction.drag_y {
+                        let lane = self.lane_at_y(pos.y);
+                        (drag_y)(cue, lane)
+                    }
+                }
+                if cursor_change {
+                    ui.ctx().set_cursor_icon(
+                        match (interaction.drag_x.is_some(), interaction.drag_y.is_some()) {
+                            (true, true) => CursorIcon::Move,
+                            (false, true) => CursorIcon::ResizeVertical,
+                            (true, false) => CursorIcon::ResizeHorizontal,
+                            (false, false) => CursorIcon::Default,
+                        },
+                    );
+                }
+            }
+        }
+    }
 }
 
 pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
@@ -1097,6 +1353,9 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     tlr.draw_lane_separators(stroke);
     tlr.render_regions();
     tlr.render_ltc_events(app.selected_beat_idx);
+
+    tlr.render_playback();
+
     tlr.render_edit_head(ui.ctx().animate_value_with_time(
         "edit_cursor_x_location".into(),
         tlr.x(app.selected_beat_idx),
@@ -1134,4 +1393,6 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     //tlr.playbacks(app, ui);
 
     tlr.try_zoom(app, ui);
+
+    tlr.handle_interaction(app, ui);
 }

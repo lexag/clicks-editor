@@ -1,6 +1,7 @@
 use crate::{
     actions::{self, Action},
     clip::ClipManager,
+    panel::timeline::TimelineInteractable,
 };
 use common::cue::Show;
 use egui::{Context, FontFamily, Vec2};
@@ -17,6 +18,8 @@ pub struct ClicksEditorApp {
     pub selected_beat_idx: usize,
     pub pan: Vec2,
     pub zoom: f32,
+    #[serde(skip)]
+    pub current_interaction_hash: u64,
     pub proportional_beat_length: bool,
     pub left_display_select: DisplaySelect,
     #[serde(skip)]
@@ -157,6 +160,7 @@ impl Default for ClicksEditorApp {
             left_display_select: DisplaySelect::Cues,
             clip_manager: ClipManager::default(),
             last_action: None,
+            current_interaction_hash: 0,
         }
     }
 }
