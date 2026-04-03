@@ -1,7 +1,7 @@
 use crate::app::ClicksEditorApp;
 use common::{
     cue::Cue,
-    event::{EventDescription, JumpModeChange, JumpRequirement},
+    event::{self, EventDescription, JumpModeChange, JumpRequirement},
     mem::smpte::TimecodeInstant,
 };
 use egui::{
@@ -121,6 +121,14 @@ impl TimelineInteractable {
             hash: self.hash(salt),
             ..self
         }
+    }
+
+    pub fn make_event_location_drag(event_idx: usize) -> InteractionFunction {
+        Some(Box::new(move |cue, beat| {
+            if let Some(event) = cue.events.get_mut(event_idx as u8) {
+                event.location = beat as u16;
+            }
+        }))
     }
 }
 
@@ -343,7 +351,7 @@ impl TimelineRenderer {
         fill: Color32,
         size: f32,
         text: impl Into<String>,
-    ) {
+    ) -> Rect {
         let text: String = text.into();
 
         let needed_size = self.calculate_text_size(size, &text) + Vec2::splat(size * 0.5);
@@ -353,6 +361,8 @@ impl TimelineRenderer {
             .rect(rect, 0.0, fill, stroke, egui::StrokeKind::Inside);
 
         self.draw_fit_text(rect, Align2::LEFT_CENTER, size, text, color, TextFit::Hide);
+
+        rect
     }
 
     fn draw_fit_text(
@@ -497,11 +507,7 @@ impl TimelineRenderer {
                 "region_drag",
                 self.make_edge_rect(rect, Align2::LEFT_CENTER),
                 region.3,
-                Some(Box::new(move |cue, beat| {
-                    if let Some(event) = cue.events.get_mut(region.3 as u8) {
-                        event.location = beat as u16;
-                    }
-                })),
+                TimelineInteractable::make_event_location_drag(region.3),
                 None,
             ));
         }
@@ -530,11 +536,11 @@ impl TimelineRenderer {
         self.draw_vertical_line(rect.left(), 5, 34, stroke);
     }
 
-    pub fn render_playback(&self) {
-        // (sample offset, clip_idx, start, end)
-        let mut clips = Vec::<Vec<(i32, u16, u16, u16)>>::new();
+    pub fn render_playback(&mut self) {
+        // (event_idx, start, end, event_desc)
+        let mut clips = Vec::<Vec<(usize, u16, u16, EventDescription)>>::new();
         clips.resize_with(32, Vec::new);
-        for event in self.cue.events.iter() {
+        for (i, event) in self.cue.events.iter().enumerate() {
             if let Some(EventDescription::PlaybackEvent {
                 sample,
                 channel_idx,
@@ -542,61 +548,87 @@ impl TimelineRenderer {
             }) = event.event
             {
                 if let Some(clip) = clips[channel_idx as usize].last_mut() {
-                    clip.3 = event.location;
+                    clip.2 = event.location;
                 }
                 clips[channel_idx as usize].push((
-                    sample,
-                    clip_idx,
+                    i,
                     event.location,
                     self.last_beat() as u16,
+                    EventDescription::PlaybackEvent {
+                        sample,
+                        channel_idx,
+                        clip_idx,
+                    },
                 ))
             } else if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event {
                 if let Some(clip) = clips[channel_idx as usize].last_mut() {
-                    clip.3 = event.location;
+                    clip.2 = event.location;
                 }
             }
         }
 
         for (i, channel) in clips.iter().enumerate() {
             for clip in channel {
-                self.render_playback_clip(i, clip.0, clip.1, clip.2, clip.3);
+                let event_idx = clip.0;
+                let rect = self.lane_rect(i + 5, clip.1.into(), (clip.2 - 1).into());
+                self.render_playback_clip(rect, clip.3);
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "playback_start_drag",
+                    self.make_edge_rect(rect, Align2::LEFT_CENTER),
+                    clip.0,
+                    TimelineInteractable::make_event_location_drag(clip.0),
+                    None,
+                ));
             }
         }
 
-        for event in self.cue.events.iter() {
+        for (i, event) in self.cue.events.clone().iter().enumerate() {
             if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event {
-                self.render_playback_stop(channel_idx.into(), event.location);
+                let rect = self.render_playback_stop(channel_idx.into(), event.location);
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "playback_stop_drag",
+                    rect,
+                    i,
+                    TimelineInteractable::make_event_location_drag(i),
+                    Some(Box::new(move |cue, lane| {
+                        if let Some(event) = cue.events.get_mut(i as u8)
+                            && let Some(EventDescription::PlaybackStopEvent { channel_idx }) =
+                                event.event.as_mut()
+                        {
+                            *channel_idx = lane.saturating_sub(6) as u16;
+                        }
+                    })),
+                ));
             }
         }
     }
 
-    fn render_playback_clip(
-        &self,
-        channel_idx: usize,
-        sample_offs: i32,
-        clip_idx: u16,
-        start: u16,
-        end: u16,
-    ) {
-        let rect = self.lane_rect(channel_idx + 5, start.into(), (end - 1).into());
-        self.painter.rect(
-            rect,
-            8.0,
-            Color32::BLUE,
-            self.style.window_stroke,
-            egui::StrokeKind::Inside,
-        );
-        self.draw_fit_text(
-            rect,
-            Align2::LEFT_TOP,
-            12.0,
-            format!("Clip #{}", clip_idx),
-            self.style.text_color(),
-            TextFit::Hide,
-        );
+    fn render_playback_clip(&self, rect: Rect, description: EventDescription) {
+        if let EventDescription::PlaybackEvent {
+            sample,
+            channel_idx,
+            clip_idx,
+        } = description
+        {
+            self.painter.rect(
+                rect,
+                8.0,
+                Color32::BLUE,
+                self.style.window_stroke,
+                egui::StrokeKind::Inside,
+            );
+            self.draw_fit_text(
+                rect,
+                Align2::LEFT_TOP,
+                12.0,
+                format!("Clip #{}", clip_idx),
+                self.style.text_color(),
+                TextFit::Hide,
+            );
+        }
     }
 
-    fn render_playback_stop(&self, channel_idx: usize, location: u16) {
+    fn render_playback_stop(&self, channel_idx: usize, location: u16) -> Rect {
         let rect = self.lane_rect(channel_idx + 5, location.into(), self.last_beat());
         self.draw_text_in_box(
             rect.left_center(),
@@ -605,7 +637,7 @@ impl TimelineRenderer {
             self.style.window_fill,
             12.0,
             "STOP",
-        );
+        )
     }
 
     pub fn render_jumps(&self) {
@@ -1296,7 +1328,7 @@ impl TimelineRenderer {
                 if interaction.hash == app.current_interaction_hash {
                     cursor_change = true;
                     if dragged && let Some(drag_x) = &interaction.drag_x {
-                        let beat = self.beat_at_x(pos.x);
+                        let beat = self.beat_at_x(pos.x).saturating_sub(1);
                         (drag_x)(cue, beat)
                     }
                     if dragged && let Some(drag_y) = &interaction.drag_y {
