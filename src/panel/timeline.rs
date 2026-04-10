@@ -676,6 +676,8 @@ impl TimelineRenderer {
             self.render_jump_repeat(location, destination);
         } else if destination < location {
             self.render_jump_vamp(location, destination)
+        } else if requirement == JumpRequirement::JumpModeOff {
+            self.render_jump_volta(location, destination)
         } else {
             self.render_jump_skip(location, destination)
         };
@@ -737,6 +739,33 @@ impl TimelineRenderer {
         self.draw_fit_text(
             rect,
             Align2::CENTER_CENTER,
+            14.0,
+            "(Skip)",
+            Color32::WHITE,
+            TextFit::Hide,
+        );
+    }
+
+    fn render_jump_volta(&self, location: u16, destination: u16) {
+        if location + 1 == destination {
+            return;
+        }
+        let rect = self
+            .lane_rect(
+                3,
+                location.saturating_add(1).into(),
+                destination.saturating_sub(1).into(),
+            )
+            .with_min_y(self.y_mid(3));
+        self.draw_dashed_rect(
+            rect,
+            Stroke::new(2.0, Color32::YELLOW),
+            Color32::YELLOW.gamma_multiply(0.5),
+            10.0,
+        );
+        self.draw_fit_text(
+            rect,
+            Align2::CENTER_BOTTOM,
             14.0,
             "(Skip)",
             Color32::WHITE,
