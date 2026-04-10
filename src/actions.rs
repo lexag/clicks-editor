@@ -177,6 +177,22 @@ fn delete_beat(app: &mut ClicksEditorApp, idx: usize) {
     }
     cue_mut!(app).events.shift_events(idx as u16, -1);
     cue_mut!(app).beats.remove(app.selected_beat_idx);
+    shift_jumps_destinations(app, idx, -1);
+}
+
+fn shift_jumps_destinations(app: &mut ClicksEditorApp, idx: usize, offset: i16) {
+    for event in cue_mut!(app).events.iter_mut() {
+        if let Some(EventDescription::JumpEvent {
+            destination,
+            requirement,
+            when_jumped,
+            when_passed,
+        }) = event.event.as_mut()
+            && *destination > idx as u16
+        {
+            *destination = (*destination as i16).saturating_add(offset).max(0) as u16
+        }
+    }
 }
 
 fn delete_beats(app: &mut ClicksEditorApp, idxs: Vec<usize>) {
@@ -185,6 +201,14 @@ fn delete_beats(app: &mut ClicksEditorApp, idxs: Vec<usize>) {
     for idx in idxs.iter().rev() {
         delete_beat(app, *idx);
     }
+}
+
+fn insert_beat_at_edit_cursor(app: &mut ClicksEditorApp, beat: Beat) {
+    cue_mut!(app).beats.insert(app.selected_beat_idx + 1, beat);
+    cue_mut!(app)
+        .events
+        .shift_events(app.selected_beat_idx as u16 + 1, 1);
+    shift_jumps_destinations(app, app.selected_beat_idx, 1);
 }
 
 pub fn all_actions() -> Vec<Action> {
@@ -286,8 +310,8 @@ pub fn action(action_id: &str) -> Action {
                 } else {
                     let beat = beat!(app);
 
-                    cue_mut!(app).beats.insert(
-                        app.selected_beat_idx + 1,
+                    insert_beat_at_edit_cursor(
+                        app,
                         Beat {
                             count: beat.count + 1,
                             bar_number: beat.bar_number,
@@ -296,9 +320,6 @@ pub fn action(action_id: &str) -> Action {
                     );
                     app.selected_beat_idx += 1;
                 }
-                cue_mut!(app)
-                    .events
-                    .shift_events(app.selected_beat_idx as u16 + 1, 1);
                 cue_mut!(app).reorder_numbers();
                 (action("cue:recalculate_tempo_changes").function)(app);
             },
@@ -316,17 +337,14 @@ pub fn action(action_id: &str) -> Action {
             icon: egui_material_icons::icons::ICON_ADD_CIRCLE.to_string(),
             function: |app| {
                 let beat = beat!(app);
-                cue_mut!(app).beats.insert(
-                    app.selected_beat_idx + 1,
+                insert_beat_at_edit_cursor(
+                    app,
                     Beat {
                         count: 1,
                         bar_number: beat.bar_number + 1,
                         ..Default::default()
                     },
                 );
-                cue_mut!(app)
-                    .events
-                    .shift_events(app.selected_beat_idx as u16 + 1, 1);
                 app.selected_beat_idx += 1;
                 cue_mut!(app).reorder_numbers();
                 (action("cue:recalculate_tempo_changes").function)(app);
