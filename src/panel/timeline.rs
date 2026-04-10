@@ -645,7 +645,7 @@ impl TimelineRenderer {
     }
 
     pub fn render_jumps(&mut self) {
-        for event in self.cue.events.clone().iter() {
+        for (i, event) in self.cue.events.clone().iter().enumerate() {
             if let Some(EventDescription::JumpEvent {
                 destination,
                 requirement,
@@ -653,13 +653,46 @@ impl TimelineRenderer {
                 when_passed,
             }) = event.event
             {
-                self.render_jump(
+                let rect = self.render_jump(
                     event.location,
                     destination,
                     when_jumped,
                     when_passed,
                     requirement,
                 );
+
+                let (dest_side, loc_side) = if destination > event.location {
+                    (Align2::RIGHT_CENTER, Align2::LEFT_CENTER)
+                } else {
+                    (Align2::LEFT_CENTER, Align2::RIGHT_CENTER)
+                };
+
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "jump_event_drag_location",
+                    self.make_edge_rect(rect, loc_side),
+                    i,
+                    TimelineInteractable::make_event_location_drag(i),
+                    None,
+                ));
+
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "jump_event_drag_destination",
+                    self.make_edge_rect(rect, dest_side),
+                    i,
+                    Some(Box::new(move |cue, beat| {
+                        if let Some(event) = cue.events.get_mut(i as u8)
+                            && let Some(EventDescription::JumpEvent {
+                                destination,
+                                requirement,
+                                when_jumped,
+                                when_passed,
+                            }) = event.event.as_mut()
+                        {
+                            *destination = beat as u16;
+                        }
+                    })),
+                    None,
+                ));
             }
         }
     }
@@ -671,19 +704,19 @@ impl TimelineRenderer {
         when_jumped: JumpModeChange,
         when_passed: JumpModeChange,
         requirement: JumpRequirement,
-    ) {
+    ) -> Rect {
         if destination < location && when_jumped == JumpModeChange::SetOff {
-            self.render_jump_repeat(location, destination);
+            self.render_jump_repeat(location, destination)
         } else if destination < location {
             self.render_jump_vamp(location, destination)
         } else if requirement == JumpRequirement::JumpModeOff {
             self.render_jump_volta(location, destination)
         } else {
             self.render_jump_skip(location, destination)
-        };
+        }
     }
 
-    fn render_jump_repeat(&mut self, location: u16, destination: u16) {
+    fn render_jump_repeat(&mut self, location: u16, destination: u16) -> Rect {
         let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
@@ -700,9 +733,11 @@ impl TimelineRenderer {
             Color32::BLACK,
             TextFit::Hide,
         );
+
+        rect
     }
 
-    fn render_jump_vamp(&mut self, location: u16, destination: u16) {
+    fn render_jump_vamp(&mut self, location: u16, destination: u16) -> Rect {
         let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
@@ -719,11 +754,13 @@ impl TimelineRenderer {
             Color32::BLACK,
             TextFit::Hide,
         );
+
+        rect
     }
 
-    fn render_jump_skip(&self, location: u16, destination: u16) {
+    fn render_jump_skip(&self, location: u16, destination: u16) -> Rect {
         if location + 1 == destination {
-            return;
+            return Rect::ZERO;
         }
         let rect = self.lane_rect(
             3,
@@ -744,11 +781,12 @@ impl TimelineRenderer {
             Color32::WHITE,
             TextFit::Hide,
         );
+        rect
     }
 
-    fn render_jump_volta(&self, location: u16, destination: u16) {
+    fn render_jump_volta(&self, location: u16, destination: u16) -> Rect {
         if location + 1 == destination {
-            return;
+            return Rect::ZERO;
         }
         let rect = self
             .lane_rect(
@@ -771,6 +809,7 @@ impl TimelineRenderer {
             Color32::WHITE,
             TextFit::Hide,
         );
+        rect
     }
 
     fn render_tempo_changes(&mut self) {
@@ -1430,6 +1469,12 @@ impl TimelineRenderer {
                     }
                 }
                 if cursor_change {
+                    self.painter.rect_stroke(
+                        interaction.rect,
+                        5.0,
+                        Stroke::new(1.0, self.style.text_color()),
+                        egui::StrokeKind::Outside,
+                    );
                     ui.ctx().set_cursor_icon(
                         match (interaction.drag_x.is_some(), interaction.drag_y.is_some()) {
                             (true, true) => CursorIcon::Move,
