@@ -1,5 +1,4 @@
 use crate::{actions, app::ClicksEditorApp};
-use common::cue::Cue;
 use egui::vec2;
 
 pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
@@ -44,8 +43,8 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
 pub fn buttons(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let actions = actions::actions("show");
-        let width = ui.available_width() / actions.len() as f32 * 0.9;
-        let height = ui.available_height() * 0.9;
+        let _width = ui.available_width() / actions.len() as f32 * 0.9;
+        let _height = ui.available_height() * 0.9;
         for act_id in actions {
             actions::action(&act_id).button_concise(app, ui);
         }

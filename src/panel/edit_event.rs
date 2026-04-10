@@ -1,4 +1,3 @@
-use crate::app::ClicksEditorApp;
 use common::{
     event::{Event, EventDescription, JumpModeChange, JumpRequirement, PauseEventBehaviour},
     mem::{
@@ -65,7 +64,7 @@ fn edit_pause_event(ui: &mut egui::Ui, behaviour: &mut PauseEventBehaviour) {
                 PauseEventBehaviour::NextCue,
                 PauseEventBehaviour::Jump { destination: 0 },
             ] {
-                ui.selectable_value(behaviour, val.clone(), format!("{}", val));
+                ui.selectable_value(behaviour, val, format!("{}", val));
             }
         });
     ui.end_row();
@@ -141,7 +140,7 @@ fn edit_jump_event(
                 JumpRequirement::JumpModeOn,
                 JumpRequirement::JumpModeOff,
             ] {
-                ui.selectable_value(requirement, val.clone(), format!("{}", val));
+                ui.selectable_value(requirement, val, format!("{}", val));
             }
         });
     ui.end_row();
@@ -156,7 +155,7 @@ fn edit_jump_event(
                 JumpModeChange::SetOff,
                 JumpModeChange::Toggle,
             ] {
-                ui.selectable_value(when_jumped, val.clone(), format!("{}", val));
+                ui.selectable_value(when_jumped, val, format!("{}", val));
             }
         });
     ui.end_row();
@@ -171,7 +170,7 @@ fn edit_jump_event(
                 JumpModeChange::SetOff,
                 JumpModeChange::Toggle,
             ] {
-                ui.selectable_value(when_passed, val.clone(), format!("{}", val));
+                ui.selectable_value(when_passed, val, format!("{}", val));
             }
         });
     ui.end_row();
@@ -191,7 +190,7 @@ fn edit_timecode_event(
     ui.end_row();
     ui.label("Time:");
     ui.horizontal(|ui| {
-        for (val, max, unit) in [
+        for (val, max, _unit) in [
             (&mut time.h, 29, 'h'),
             (&mut time.m, 59, 'm'),
             (&mut time.s, 59, 's'),

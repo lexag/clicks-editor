@@ -1,12 +1,11 @@
 use crate::{
     actions::{self, Action},
     clip::ClipManager,
-    panel::timeline::TimelineInteractable,
 };
 use common::cue::Show;
 use egui::{Context, FontFamily, Vec2};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, default, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
@@ -82,7 +81,7 @@ impl ProjectFile {
 
         // Serialize show into show.bin
         let res = postcard::to_stdvec::<Show>(&self.show)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         std::fs::write(path.join("show.bin"), &res)?;
 
         Ok(())

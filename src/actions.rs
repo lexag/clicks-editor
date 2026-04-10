@@ -1,15 +1,14 @@
 use crate::app::ClicksEditorApp;
 use common::{
     beat::Beat,
-    cue::{Cue, CueMetadata, Show},
+    cue::{Cue, CueMetadata},
     event::{Event, EventDescription, JumpModeChange, JumpRequirement},
-    local::status::PlaybackHandlerStatus,
     mem::{
         smpte::{TimecodeInstant, TimecodeProperties},
         str::StaticString,
     },
 };
-use egui::{Color32, Image, Key, KeyboardShortcut, ModifierNames, Modifiers};
+use egui::{Color32, Key, KeyboardShortcut, ModifierNames, Modifiers};
 
 #[derive(Clone)]
 pub struct Action {
@@ -184,9 +183,9 @@ fn shift_jumps_destinations(app: &mut ClicksEditorApp, idx: usize, offset: i16) 
     for event in cue_mut!(app).events.iter_mut() {
         if let Some(EventDescription::JumpEvent {
             destination,
-            requirement,
-            when_jumped,
-            when_passed,
+            requirement: _,
+            when_jumped: _,
+            when_passed: _,
         }) = event.event.as_mut()
             && *destination > idx as u16
         {
@@ -324,7 +323,7 @@ pub fn action(action_id: &str) -> Action {
                 (action("cue:recalculate_tempo_changes").function)(app);
             },
             interactible: |app| has_cue!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::B,
@@ -350,7 +349,7 @@ pub fn action(action_id: &str) -> Action {
                 (action("cue:recalculate_tempo_changes").function)(app);
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::N,
@@ -379,7 +378,7 @@ pub fn action(action_id: &str) -> Action {
                 (action("cue:recalculate_tempo_changes").function)(app);
             },
             interactible: |app| has_cue!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::M,
@@ -396,7 +395,7 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).reorder_numbers();
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::Delete,
@@ -421,7 +420,7 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).reorder_numbers();
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL,
                 logical_key: Key::Delete,
@@ -436,7 +435,7 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).reorder_numbers();
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL.plus(Modifiers::ALT),
                 logical_key: Key::R,
@@ -456,7 +455,7 @@ pub fn action(action_id: &str) -> Action {
                 }
                 let num_to_add = sel_bar_length!(app);
                 for i in 0..num_to_add {
-                    &mut cue_mut!(app).beats.insert(
+                    cue_mut!(app).beats.insert(
                         i,
                         Beat {
                             count: i as u8 + 1,
@@ -470,7 +469,7 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).reorder_numbers();
             },
             interactible: |app| has_beat!(app) && cue!(app).beats[0].bar_number != 0,
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::I,
@@ -484,8 +483,8 @@ pub fn action(action_id: &str) -> Action {
             function: |app| {
                 cue_mut!(app).recalculate_tempo_changes();
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL,
                 logical_key: Key::R,
@@ -499,8 +498,8 @@ pub fn action(action_id: &str) -> Action {
             function: |app| {
                 app.zoom *= 1.1;
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::NONE,
                 logical_key: Key::Plus,
@@ -515,7 +514,7 @@ pub fn action(action_id: &str) -> Action {
                 app.zoom = 12.0;
             },
             interactible: |app| (app.zoom - 12.0).abs() > 0.00001,
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "view:zoom_out" => Action {
@@ -526,8 +525,8 @@ pub fn action(action_id: &str) -> Action {
             function: |app| {
                 app.zoom *= 0.9090909;
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::NONE,
                 logical_key: Key::Minus,
@@ -541,7 +540,7 @@ pub fn action(action_id: &str) -> Action {
             function: |app| {
                 app.proportional_beat_length = !app.proportional_beat_length;
             },
-            interactible: |app| true,
+            interactible: |_app| true,
             active: |app| app.proportional_beat_length,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL,
@@ -561,7 +560,7 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).recalculate_tempo_changes();
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_gradual_tempo_event" => Action {
@@ -581,7 +580,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_rehearsal_event" => Action {
@@ -598,7 +597,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_timecode_event" => Action {
@@ -616,7 +615,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_timecode_stop_event" => Action {
@@ -631,7 +630,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_jump" => Action {
@@ -651,7 +650,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_vamp" => Action {
@@ -671,7 +670,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_repeat" => Action {
@@ -691,7 +690,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_volta" => Action {
@@ -711,7 +710,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_playback_event" => Action {
@@ -730,7 +729,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_playback_stop_event" => Action {
@@ -745,7 +744,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "beat:add_pause_event" => Action {
@@ -762,7 +761,7 @@ pub fn action(action_id: &str) -> Action {
                 ));
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "show:add_cue" => Action {
@@ -780,8 +779,8 @@ pub fn action(action_id: &str) -> Action {
                     human_ident: StaticString::new("000"),
                 };
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: None,
         },
         "show:delete_cue" => Action {
@@ -794,7 +793,7 @@ pub fn action(action_id: &str) -> Action {
                 app.selected_cue_idx = app.selected_cue_idx.saturating_sub(1);
             },
             interactible: |app| !app.project_file.show.cues.is_empty(),
-            active: |app| false,
+            active: |_app| false,
             hotkey: None,
         },
         "show:duplicate_cue" => Action {
@@ -812,12 +811,12 @@ pub fn action(action_id: &str) -> Action {
                     .is_null()
                 {
                     let cue = app.project_file.show.cues[app.selected_cue_idx].clone();
-                    &mut app.project_file.show.cues.insert(app.selected_cue_idx, cue);
+                    app.project_file.show.cues.insert(app.selected_cue_idx, cue);
                     app.selected_cue_idx += 1;
                 }
             },
             interactible: |app| !app.project_file.show.cues.is_empty(),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL,
                 logical_key: Key::D,
@@ -836,7 +835,7 @@ pub fn action(action_id: &str) -> Action {
                 app.selected_cue_idx -= 1;
             },
             interactible: |app| app.selected_cue_idx > 0,
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::PageUp,
@@ -855,7 +854,7 @@ pub fn action(action_id: &str) -> Action {
                 app.selected_cue_idx += 1;
             },
             interactible: |app| app.selected_cue_idx + 1 < app.project_file.show.cues.len(),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::PageDown,
@@ -869,8 +868,8 @@ pub fn action(action_id: &str) -> Action {
             function: |app| {
                 let _ = app.clip_manager.import(app.project_file.path.clone());
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: None,
         },
 
@@ -887,7 +886,7 @@ pub fn action(action_id: &str) -> Action {
                     .min(app.project_file.show.cues.len() - 1);
             },
             interactible: |app| has_cue!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::NONE,
                 logical_key: Key::PageDown,
@@ -906,7 +905,7 @@ pub fn action(action_id: &str) -> Action {
                     .min(app.project_file.show.cues.len() - 1);
             },
             interactible: |app| has_cue!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::NONE,
                 logical_key: Key::PageUp,
@@ -928,7 +927,7 @@ pub fn action(action_id: &str) -> Action {
                 }
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::ArrowRight,
@@ -950,7 +949,7 @@ pub fn action(action_id: &str) -> Action {
                 }
             },
             interactible: |app| has_beat!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::SHIFT,
                 logical_key: Key::ArrowLeft,
@@ -966,7 +965,7 @@ pub fn action(action_id: &str) -> Action {
                 app.selected_beat_idx = app.selected_beat_idx.max(0).min(cue!(app).beats.len() - 1);
             },
             interactible: |app| has_cue!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::NONE,
                 logical_key: Key::ArrowRight,
@@ -985,7 +984,7 @@ pub fn action(action_id: &str) -> Action {
                 }
             },
             interactible: |app| has_cue!(app),
-            active: |app| false,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::NONE,
                 logical_key: Key::ArrowLeft,
@@ -1002,8 +1001,8 @@ pub fn action(action_id: &str) -> Action {
                     action("show:refresh_audio_clips").run(app);
                 }
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL,
                 logical_key: Key::O,
@@ -1028,8 +1027,8 @@ pub fn action(action_id: &str) -> Action {
                 }
                 app.last_action = None;
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL,
                 logical_key: Key::S,
@@ -1046,8 +1045,8 @@ pub fn action(action_id: &str) -> Action {
                 }
                 app.last_action = None;
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: Some(KeyboardShortcut {
                 modifiers: Modifiers::CTRL | Modifiers::SHIFT,
                 logical_key: Key::S,
@@ -1069,8 +1068,8 @@ pub fn action(action_id: &str) -> Action {
                     );
                 }
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: None,
         },
         "project:export_json" => Action {
@@ -1089,8 +1088,8 @@ pub fn action(action_id: &str) -> Action {
                     );
                 }
             },
-            interactible: |app| true,
-            active: |app| false,
+            interactible: |_app| true,
+            active: |_app| false,
             hotkey: None,
         },
         //"select:next_event" => Action {
@@ -1136,9 +1135,9 @@ pub fn action(action_id: &str) -> Action {
             name_global: "".to_string(),
             name_concise: "".to_string(),
             icon: egui_material_icons::icons::ICON_ADB.to_string(),
-            function: |app| {},
-            interactible: |app| false,
-            active: |app| false,
+            function: |_app| {},
+            interactible: |_app| false,
+            active: |_app| false,
             hotkey: None,
         },
     }

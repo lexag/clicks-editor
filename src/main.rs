@@ -26,7 +26,7 @@ pub fn main() -> eframe::Result {
     };
 
     let args = env::args().collect::<Vec<String>>();
-    let path = args.get(1).clone();
+    let path = args.get(1);
 
     eframe::run_native(
         "eframe template",

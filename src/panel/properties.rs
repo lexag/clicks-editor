@@ -1,11 +1,8 @@
 use crate::{actions, app::ClicksEditorApp, panel::edit_event::edit_event};
 use common::{
-    event::{
-        Event, EventCursor, EventDescription, JumpModeChange, JumpRequirement, PauseEventBehaviour,
-    },
+    event::EventCursor,
     mem::str::StaticString,
 };
-use std::fmt::Display;
 
 pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     if app.selected_cue_idx >= app.project_file.show.cues.len() {
@@ -44,10 +41,10 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
                 return;
             }
 
-            let beat = &mut cue.beats[app.selected_beat_idx];
+            let _beat = &mut cue.beats[app.selected_beat_idx];
             let mut delete_idx: i32 = -1;
             let events_clone = cue.events.clone();
-            let mut cursor = EventCursor::new(&events_clone);
+            let _cursor = EventCursor::new(&events_clone);
             if let Some(event) = cue.events.get_mut(app.selected_event_idx as u8) {
                 ui.separator();
                 ui.vertical(|ui| {

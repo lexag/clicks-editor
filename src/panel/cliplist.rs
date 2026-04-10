@@ -18,7 +18,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
             ui.label("Length");
             ui.end_row();
 
-            for (i, val) in app.clip_manager.clips.iter().enumerate() {
+            for val in app.clip_manager.clips.iter() {
                 let ch_idx = val.0 .0;
                 let cl_idx = val.0 .1;
                 let clip = val.1;

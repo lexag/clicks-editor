@@ -46,19 +46,19 @@ impl ClipManager {
                     hound::SampleFormat::Float => reader
                         .samples::<f32>()
                         .map(|sample| {
-                            if let Err(err) = sample {
+                            if let Err(_err) = sample {
                                 return 0.0;
                             }
-                            return sample.expect("Err already handled.");
+                            sample.expect("Err already handled.")
                         })
                         .collect(),
                     hound::SampleFormat::Int => reader
                         .samples::<i32>()
                         .map(|sample| {
-                            if let Err(err) = sample {
+                            if let Err(_err) = sample {
                                 return 0.0;
                             }
-                            return (sample.expect("Err already handled.") as f32).div(32768.0);
+                            (sample.expect("Err already handled.") as f32).div(32768.0)
                         })
                         .collect(),
                 };

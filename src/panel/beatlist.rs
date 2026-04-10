@@ -41,6 +41,6 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     });
 }
 
-pub fn buttons(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {});
+pub fn buttons(_app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
+    ui.horizontal(|_ui| {});
 }

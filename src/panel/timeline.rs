@@ -1,12 +1,12 @@
 use crate::app::ClicksEditorApp;
 use common::{
     cue::Cue,
-    event::{self, EventDescription, JumpModeChange, JumpRequirement},
+    event::{EventDescription, JumpModeChange, JumpRequirement},
     mem::smpte::TimecodeInstant,
 };
 use egui::{
-    Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Painter, Pos2, Rect, Response, Shape,
-    Stroke, Style, TextWrapMode, Vec2, Visuals, epaint::text::cursor, lerp, pos2, vec2,
+    Align, Align2, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response,
+    Stroke, Vec2, Visuals, lerp, pos2, vec2,
 };
 use std::hash::{self, Hash, Hasher};
 
@@ -572,16 +572,15 @@ impl TimelineRenderer {
                         clip_idx,
                     },
                 ))
-            } else if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event {
-                if let Some(clip) = clips[channel_idx as usize].last_mut() {
+            } else if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event
+                && let Some(clip) = clips[channel_idx as usize].last_mut() {
                     clip.2 = event.location;
                 }
-            }
         }
 
         for (i, channel) in clips.iter().enumerate() {
             for clip in channel {
-                let event_idx = clip.0;
+                let _event_idx = clip.0;
                 let rect = self.lane_rect(i + 5, clip.1.into(), (clip.2 - 1).into());
                 self.render_playback_clip(rect, clip.3);
                 self.register_interaction_rect(TimelineInteractable::new(
@@ -619,8 +618,8 @@ impl TimelineRenderer {
 
     fn render_playback_clip(&self, rect: Rect, description: EventDescription) {
         if let EventDescription::PlaybackEvent {
-            sample,
-            channel_idx,
+            sample: _,
+            channel_idx: _,
             clip_idx,
         } = description
         {
@@ -694,9 +693,9 @@ impl TimelineRenderer {
                         if let Some(event) = cue.events.get_mut(i as u8)
                             && let Some(EventDescription::JumpEvent {
                                 destination,
-                                requirement,
-                                when_jumped,
-                                when_passed,
+                                requirement: _,
+                                when_jumped: _,
+                                when_passed: _,
                             }) = event.event.as_mut()
                         {
                             *destination = beat as u16;
@@ -714,7 +713,7 @@ impl TimelineRenderer {
         location: u16,
         destination: u16,
         when_jumped: JumpModeChange,
-        when_passed: JumpModeChange,
+        _when_passed: JumpModeChange,
         requirement: JumpRequirement,
     ) -> Rect {
         if destination < location && when_jumped == JumpModeChange::SetOff {
@@ -874,8 +873,8 @@ impl TimelineRenderer {
                     Some(Box::new(move |cue, beat| {
                         if let Some(event) = cue.events.get_mut(i as u8)
                             && let Some(EventDescription::GradualTempoChangeEvent {
-                                start_tempo,
-                                end_tempo,
+                                start_tempo: _,
+                                end_tempo: _,
                                 length,
                             }) = event.event.as_mut()
                         {
@@ -909,7 +908,7 @@ impl TimelineRenderer {
         let mut prev_pos = u16::MAX;
         let mut last_before_cursor = 0;
         for event in self.cue.events.iter() {
-            if let Some(EventDescription::TimecodeEvent { time, properties }) = event.event {
+            if let Some(EventDescription::TimecodeEvent { time, properties: _ }) = event.event {
                 if (event.location as usize) < cursor_pos {
                     time_at_cursor = time;
                     last_before_cursor = event.location as usize;
@@ -946,7 +945,7 @@ impl TimelineRenderer {
         }
 
         for (i, event) in self.cue.events.clone().iter().enumerate() {
-            if let Some(EventDescription::TimecodeEvent { time, properties }) = event.event {
+            if let Some(EventDescription::TimecodeEvent { time, properties: _ }) = event.event {
                 let rect = self.render_timestamp(event.location, time);
                 self.register_interaction_rect(TimelineInteractable::new(
                     "ltc_marker_drag",
