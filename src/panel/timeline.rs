@@ -644,8 +644,8 @@ impl TimelineRenderer {
         )
     }
 
-    pub fn render_jumps(&self) {
-        for event in self.cue.events.iter() {
+    pub fn render_jumps(&mut self) {
+        for event in self.cue.events.clone().iter() {
             if let Some(EventDescription::JumpEvent {
                 destination,
                 requirement,
@@ -665,7 +665,7 @@ impl TimelineRenderer {
     }
 
     pub fn render_jump(
-        &self,
+        &mut self,
         location: u16,
         destination: u16,
         when_jumped: JumpModeChange,
@@ -683,7 +683,7 @@ impl TimelineRenderer {
         };
     }
 
-    fn render_jump_repeat(&self, location: u16, destination: u16) {
+    fn render_jump_repeat(&mut self, location: u16, destination: u16) {
         let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
@@ -702,7 +702,7 @@ impl TimelineRenderer {
         );
     }
 
-    fn render_jump_vamp(&self, location: u16, destination: u16) {
+    fn render_jump_vamp(&mut self, location: u16, destination: u16) {
         let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
@@ -773,34 +773,69 @@ impl TimelineRenderer {
         );
     }
 
-    fn render_tempo_changes(&self) {
-        for event in self.cue.events.iter() {
+    fn render_tempo_changes(&mut self) {
+        for (i, event) in self.cue.events.clone().iter().enumerate() {
             if let Some(EventDescription::TempoChangeEvent { tempo }) = event.event {
-                self.render_tempo_change(event.location, tempo);
+                let rect = self.lane_rect(2, event.location as usize, self.last_beat());
+                let act_rect = self.render_tempo_change(rect, tempo);
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "tempo_marker_drag",
+                    act_rect,
+                    i,
+                    TimelineInteractable::make_event_location_drag(i),
+                    None,
+                ));
             } else if let Some(EventDescription::GradualTempoChangeEvent {
                 start_tempo,
                 end_tempo,
                 length,
             }) = event.event
             {
+                let rect_a = self.lane_rect(2, event.location as usize, self.last_beat());
+                let rect_b =
+                    self.lane_rect(2, (length + event.location) as usize, self.last_beat());
+                let rect_mid = self.lane_rect(
+                    2,
+                    event.location as usize,
+                    event.location as usize + length as usize - 1,
+                );
                 self.draw_dashed_rect(
-                    self.lane_rect(
-                        2,
-                        event.location as usize,
-                        event.location as usize + length as usize - 1,
-                    ),
+                    rect_mid,
                     self.style.window_stroke,
                     self.style.window_stroke.color,
                     10.0,
                 );
-                self.render_tempo_change(event.location, start_tempo);
-                self.render_tempo_change(event.location + length, end_tempo);
+                let act_rect_a = self.render_tempo_change(rect_a, start_tempo);
+                let act_rect_b = self.render_tempo_change(rect_b, end_tempo);
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "grad_tempo_marker_drag_main",
+                    act_rect_a,
+                    i,
+                    TimelineInteractable::make_event_location_drag(i),
+                    None,
+                ));
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "grad_tempo_marker_drag_end",
+                    act_rect_b,
+                    i,
+                    Some(Box::new(move |cue, beat| {
+                        if let Some(event) = cue.events.get_mut(i as u8)
+                            && let Some(EventDescription::GradualTempoChangeEvent {
+                                start_tempo,
+                                end_tempo,
+                                length,
+                            }) = event.event.as_mut()
+                        {
+                            *length = beat as u16 - event.location
+                        }
+                    })),
+                    None,
+                ));
             }
         }
     }
 
-    fn render_tempo_change(&self, location: u16, tempo: u16) {
-        let rect = self.lane_rect(2, location as usize, self.last_beat());
+    fn render_tempo_change(&self, rect: Rect, tempo: u16) -> Rect {
         self.draw_text_in_box(
             rect.left_center(),
             self.style.text_color(),
@@ -808,14 +843,14 @@ impl TimelineRenderer {
             self.style.extreme_bg_color,
             12.0,
             tempo.to_string(),
-        );
+        )
     }
 
     fn render_edit_head(&self, position: f32) {
         self.draw_vertical_line(position, 2, 34, self.style.widgets.active.bg_stroke);
     }
 
-    fn render_ltc_events(&self, cursor_pos: usize) {
+    fn render_ltc_events(&mut self, cursor_pos: usize) {
         let mut time_at_cursor = TimecodeInstant::new(25);
         let mut prev_pos = u16::MAX;
         let mut last_before_cursor = 0;
@@ -856,9 +891,33 @@ impl TimelineRenderer {
             );
         }
 
-        for event in self.cue.events.iter() {
+        for (i, event) in self.cue.events.clone().iter().enumerate() {
             if let Some(EventDescription::TimecodeEvent { time, properties }) = event.event {
-                self.render_timestamp(event.location, time);
+                let rect = self.render_timestamp(event.location, time);
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "ltc_marker_drag",
+                    rect,
+                    i,
+                    TimelineInteractable::make_event_location_drag(i),
+                    None,
+                ));
+            } else if let Some(EventDescription::TimecodeStopEvent) = event.event {
+                let rect = self.draw_text_in_box(
+                    pos2(self.x(event.location as usize), self.y_mid(4)),
+                    self.style.text_color(),
+                    self.style.window_stroke,
+                    self.style.extreme_bg_color,
+                    12.0,
+                    "LTC STOP",
+                );
+
+                self.register_interaction_rect(TimelineInteractable::new(
+                    "ltc_stop_marker_drag",
+                    rect,
+                    i,
+                    TimelineInteractable::make_event_location_drag(i),
+                    None,
+                ));
             }
         }
 
@@ -870,7 +929,7 @@ impl TimelineRenderer {
         self.render_timestamp(cursor_pos as u16, time_at_cursor);
     }
 
-    fn render_timestamp(&self, location: u16, time: TimecodeInstant) {
+    fn render_timestamp(&mut self, location: u16, time: TimecodeInstant) -> Rect {
         self.draw_text_in_box(
             pos2(self.x(location as usize), self.y_mid(4)),
             self.style.text_color(),
@@ -878,7 +937,7 @@ impl TimelineRenderer {
             self.style.extreme_bg_color,
             12.0,
             time.to_string(),
-        );
+        )
     }
 
     fn render_lane_list(&self) {
@@ -1337,6 +1396,7 @@ impl TimelineRenderer {
         if !mouse_down {
             app.current_interaction_hash = 0;
             cue.events.sort();
+            cue.recalculate_tempo_changes();
         }
 
         for interaction in &self.interactions {
