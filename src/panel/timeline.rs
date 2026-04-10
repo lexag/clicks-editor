@@ -1423,10 +1423,7 @@ impl TimelineRenderer {
     fn handle_interaction(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
         let cue = &mut app.project_file.show.cues[app.selected_cue_idx];
 
-        let clicked = ui.input(|i| {
-            i.pointer
-                .button_double_clicked(egui::PointerButton::Primary)
-        });
+        let clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
         let mouse_just_down = ui.input(|i| i.pointer.primary_pressed());
         let mouse_down = ui.input(|i| i.pointer.primary_down());
         let dragged = mouse_down && ui.input(|i| i.pointer.is_moving());
@@ -1453,7 +1450,7 @@ impl TimelineRenderer {
                     }
 
                     if clicked && let Some(event_idx) = interaction.event_idx {
-                        // TODO: modal with settings
+                        app.selected_event_idx = event_idx
                     }
                 }
 
@@ -1469,12 +1466,12 @@ impl TimelineRenderer {
                     }
                 }
                 if cursor_change {
-                    self.painter.rect_stroke(
-                        interaction.rect,
-                        5.0,
-                        Stroke::new(1.0, self.style.text_color()),
-                        egui::StrokeKind::Outside,
-                    );
+                    //self.painter.rect_stroke(
+                    //    interaction.rect,
+                    //    5.0,
+                    //    Stroke::new(1.0, self.style.text_color()),
+                    //    egui::StrokeKind::Outside,
+                    //);
                     ui.ctx().set_cursor_icon(
                         match (interaction.drag_x.is_some(), interaction.drag_y.is_some()) {
                             (true, true) => CursorIcon::Move,

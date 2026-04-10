@@ -15,8 +15,11 @@ pub struct ClicksEditorApp {
     #[serde(skip)]
     pub ctx: Context,
     pub selected_cue_idx: usize,
+    #[serde(skip)]
     pub selected_beat_idx: usize,
     pub pan: Vec2,
+    #[serde(skip)]
+    pub selected_event_idx: usize,
     pub zoom: f32,
     #[serde(skip)]
     pub current_interaction_hash: u64,
@@ -42,6 +45,7 @@ pub enum DisplaySelect {
     Cues,
     Clips,
     Beats,
+    Properties,
 }
 
 impl ProjectFile {
@@ -154,6 +158,7 @@ impl Default for ClicksEditorApp {
             project_file: ProjectFile::default(),
             selected_cue_idx: 0,
             selected_beat_idx: 0,
+            selected_event_idx: 0,
             pan: Vec2::splat(0.0),
             zoom: 10.0,
             proportional_beat_length: false,
@@ -271,6 +276,11 @@ impl eframe::App for ClicksEditorApp {
                     ui.selectable_value(&mut self.left_display_select, DisplaySelect::Cues, "Cues");
                     ui.selectable_value(
                         &mut self.left_display_select,
+                        DisplaySelect::Properties,
+                        "Properties",
+                    );
+                    ui.selectable_value(
+                        &mut self.left_display_select,
                         DisplaySelect::Clips,
                         "Clips",
                     );
@@ -290,6 +300,9 @@ impl eframe::App for ClicksEditorApp {
                     DisplaySelect::Beats => {
                         crate::panel::beatlist::display(self, ui);
                     }
+                    DisplaySelect::Properties => {
+                        crate::panel::properties::display(self, ui);
+                    }
                     _ => {}
                 }
             });
@@ -297,12 +310,6 @@ impl eframe::App for ClicksEditorApp {
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             crate::panel::toolbar::display(self, ui);
         });
-
-        egui::TopBottomPanel::bottom("properties_panel")
-            .exact_height(200.0)
-            .show(ctx, |ui| {
-                crate::panel::properties::display(self, ui);
-            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             crate::panel::timeline::display(self, ui);
