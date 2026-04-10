@@ -1,22 +1,15 @@
 use crate::app::ClicksEditorApp;
 use common::{
+    beat::Beat,
     cue::Cue,
-    event::{EventDescription, JumpModeChange, JumpRequirement},
+    event::{self, EventDescription, JumpModeChange, JumpRequirement},
     mem::smpte::TimecodeInstant,
 };
 use egui::{
-    Align, Align2, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response,
-    Stroke, Vec2, Visuals, lerp, pos2, vec2,
+    Align, Align2, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response, Stroke, Vec2,
+    Visuals, lerp, pos2, vec2,
 };
 use std::hash::{self, Hash, Hasher};
-
-#[derive(Clone)]
-struct RunningClip {
-    channel_idx: usize,
-    clip_idx: usize,
-    sample: i32,
-    sample_offset_from_start: i64,
-}
 
 const NUM_LANES: usize = 35;
 const INTERACTION_HANDLE_SIZE: f32 = 10.0;
@@ -113,6 +106,16 @@ impl TimelineInteractable {
     pub fn click(salt: impl Into<String>, rect: Rect, click: InteractionFunction) -> Self {
         Self::new_opt(salt, rect, None, None, None, click)
     }
+    pub fn event_move(salt: impl Into<String>, rect: Rect, event_idx: usize) -> Self {
+        Self::new_opt(
+            salt,
+            rect,
+            Some(event_idx),
+            Self::make_event_location_drag(event_idx),
+            None,
+            None,
+        )
+    }
 
     fn hash(&self, salt: String) -> u64 {
         let mut h = hash::DefaultHasher::new();
@@ -158,7 +161,6 @@ impl TimelineRenderer {
         ui: &mut egui::Ui,
         cue: Cue,
         persistent: TimelinePersistent,
-        proportional_scaling: f32,
     ) -> Self {
         let (resp, p) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
         Self {
@@ -168,11 +170,56 @@ impl TimelineRenderer {
             cue,
             pan: app.pan,
             base_beat_width: app.zoom,
-            proportional_scaling,
+            proportional_scaling: 0.0,
             persistent,
             style: ui.style().visuals.clone(),
             interactions: vec![],
         }
+    }
+
+    pub fn show(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
+        let show_individual_beats = self.beat_width_from_length(500000) > 20.0;
+        if show_individual_beats {
+            self.draw_beat_separators();
+        } else {
+            self.draw_bar_separators();
+        }
+        self.render_ruler(show_individual_beats);
+        self.draw_lane_separators();
+        self.render_regions();
+        self.render_ltc_events(app.selected_beat_idx);
+
+        self.render_playback();
+
+        self.render_edit_head_animated(app, ui);
+        self.render_jumps();
+        self.render_tempo_changes();
+
+        self.render_lane_list();
+
+        self.try_autopan(app, ui);
+        self.try_zoom(app, ui);
+
+        self.handle_interaction(app, ui);
+    }
+
+    fn try_autopan(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
+        const DEADZONE: f32 = 150.0;
+        if self.x(app.selected_beat_idx) > self.right() - DEADZONE {
+            app.pan += Vec2::RIGHT * (self.x(app.selected_beat_idx) - self.right() + DEADZONE)
+                / ui.style().animation_time
+                * 0.02
+        }
+        if self.x(app.selected_beat_idx) < self.left() + DEADZONE {
+            app.pan += Vec2::RIGHT * (self.x(app.selected_beat_idx) - self.left() - DEADZONE)
+                / ui.style().animation_time
+                * 0.02
+        }
+    }
+
+    pub fn with_proportional_scaling(mut self, proportional_scaling: f32) -> Self {
+        self.proportional_scaling = proportional_scaling;
+        self
     }
 
     fn register_interaction_rect(&mut self, inter: TimelineInteractable) {
@@ -372,6 +419,17 @@ impl TimelineRenderer {
         rect
     }
 
+    fn draw_text_basic(&self, rect: Rect, text: impl Into<String>) {
+        self.draw_fit_text(
+            rect,
+            Align2::LEFT_TOP,
+            12.0,
+            text,
+            self.style.text_color(),
+            TextFit::Hide,
+        );
+    }
+
     fn draw_fit_text(
         &self,
         rect: Rect,
@@ -420,10 +478,12 @@ impl TimelineRenderer {
         false
     }
 
-    fn calculate_text_size(&self, size: f32, text: &String) -> Vec2 {
-        let galley =
-            self.painter
-                .layout_no_wrap(text.clone(), FontId::proportional(size), Color32::MAGENTA);
+    fn calculate_text_size(&self, size: f32, text: &str) -> Vec2 {
+        let galley = self.painter.layout_no_wrap(
+            text.to_string(),
+            FontId::proportional(size),
+            Color32::MAGENTA,
+        );
         galley.size()
     }
 
@@ -434,7 +494,8 @@ impl TimelineRenderer {
         );
     }
 
-    fn draw_lane_separators(&self, stroke: Stroke) {
+    fn draw_lane_separators(&self) {
+        let stroke = self.style.widgets.noninteractive.bg_stroke;
         for i in 0..NUM_LANES {
             let y = self.y(i);
             self.painter
@@ -442,7 +503,8 @@ impl TimelineRenderer {
         }
     }
 
-    fn draw_beat_separators(&self, stroke: Stroke) {
+    fn draw_beat_separators(&self) {
+        let stroke = self.style.widgets.noninteractive.bg_stroke;
         for i in 0..self.cue.beats.len() {
             let x = self.x(i);
             self.draw_vertical_line(x, 1, 1, stroke);
@@ -450,7 +512,8 @@ impl TimelineRenderer {
         }
     }
 
-    fn draw_bar_separators(&self, stroke: Stroke) {
+    fn draw_bar_separators(&self) {
+        let stroke = self.style.widgets.noninteractive.bg_stroke;
         for (i, beat) in self.cue.beats.iter().enumerate() {
             if beat.count == 1 {
                 let x = self.x(i);
@@ -458,16 +521,6 @@ impl TimelineRenderer {
                 self.draw_vertical_line(x, 5, 34, stroke);
             }
         }
-    }
-
-    fn draw_header(&self, beat: usize, lane: usize, text: String) {
-        self.painter.text(
-            pos2(self.x(beat), self.y_mid(lane)),
-            Align2::LEFT_CENTER,
-            text,
-            FontId::proportional(11.0),
-            self.style.strong_text_color(),
-        );
     }
 
     pub fn render_ruler(&self, beats: bool) {
@@ -487,25 +540,34 @@ impl TimelineRenderer {
             };
 
             if beats || (beat.count == 1 && dist_since_last >= MIN_POINTS_PER_STEP) {
-                self.draw_fit_text(
-                    region_rect,
-                    Align2::LEFT_CENTER,
-                    11.0,
-                    if beats {
-                        format!("{}.{}", beat.bar_number, beat.count)
-                    } else {
-                        format!("{}", beat.bar_number)
-                    },
-                    if beat.count == 1 {
-                        self.style.strong_text_color()
-                    } else {
-                        self.style.weak_text_color()
-                    },
-                    TextFit::Hide,
-                );
+                self.draw_ruler_marking(region_rect, *beat, beats);
                 dist_since_last = 0.0;
             }
             dist_since_last += self.beat_width_from_length(beat.length);
+        }
+    }
+
+    fn draw_ruler_marking(&self, region_rect: Rect, beat: Beat, with_beat_count: bool) {
+        let strong = beat.count == 1;
+        self.draw_fit_text(
+            region_rect,
+            Align2::LEFT_CENTER,
+            11.0,
+            if with_beat_count {
+                format!("{}.{}", beat.bar_number, beat.count)
+            } else {
+                format!("{}", beat.bar_number)
+            },
+            self.text_color_strong_weak(strong),
+            TextFit::Hide,
+        );
+    }
+
+    fn text_color_strong_weak(&self, strong: bool) -> Color32 {
+        if strong {
+            self.style.strong_text_color()
+        } else {
+            self.style.weak_text_color()
         }
     }
 
@@ -550,6 +612,24 @@ impl TimelineRenderer {
 
     pub fn render_playback(&mut self) {
         // (event_idx, start, end, event_desc)
+        let clips = self.calculate_playback_clips();
+
+        for (i, channel) in clips.iter().enumerate() {
+            for clip in channel {
+                let event_idx = clip.0;
+                let rect = self.lane_rect(i + 5, clip.1.into(), (clip.2 - 1).into());
+                self.render_playback_clip(event_idx, rect, clip.3);
+            }
+        }
+
+        for (i, event) in self.cue.events.clone().iter().enumerate() {
+            if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event {
+                self.render_playback_stop(i, channel_idx.into(), event.location);
+            }
+        }
+    }
+
+    fn calculate_playback_clips(&mut self) -> Vec<Vec<(usize, u16, u16, EventDescription)>> {
         let mut clips = Vec::<Vec<(usize, u16, u16, EventDescription)>>::new();
         clips.resize_with(32, Vec::new);
         for (i, event) in self.cue.events.iter().enumerate() {
@@ -566,57 +646,23 @@ impl TimelineRenderer {
                     i,
                     event.location,
                     self.last_beat() as u16,
-                    EventDescription::PlaybackEvent {
-                        sample,
-                        channel_idx,
-                        clip_idx,
-                    },
+                    event.event.expect("We are inside the if"),
                 ))
             } else if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event
-                && let Some(clip) = clips[channel_idx as usize].last_mut() {
-                    clip.2 = event.location;
-                }
-        }
-
-        for (i, channel) in clips.iter().enumerate() {
-            for clip in channel {
-                let _event_idx = clip.0;
-                let rect = self.lane_rect(i + 5, clip.1.into(), (clip.2 - 1).into());
-                self.render_playback_clip(rect, clip.3);
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "playback_start_drag",
-                    self.make_edge_rect(rect, Align2::LEFT_CENTER),
-                    clip.0,
-                    TimelineInteractable::make_event_location_drag(clip.0),
-                    None,
-                    None,
-                ));
+                && let Some(clip) = clips[channel_idx as usize].last_mut()
+            {
+                clip.2 = event.location;
             }
         }
-
-        for (i, event) in self.cue.events.clone().iter().enumerate() {
-            if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event {
-                let rect = self.render_playback_stop(channel_idx.into(), event.location);
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "playback_stop_drag",
-                    rect,
-                    i,
-                    TimelineInteractable::make_event_location_drag(i),
-                    Some(Box::new(move |cue, lane| {
-                        if let Some(event) = cue.events.get_mut(i as u8)
-                            && let Some(EventDescription::PlaybackStopEvent { channel_idx }) =
-                                event.event.as_mut()
-                        {
-                            *channel_idx = lane.saturating_sub(6) as u16;
-                        }
-                    })),
-                    None,
-                ));
-            }
-        }
+        clips
     }
 
-    fn render_playback_clip(&self, rect: Rect, description: EventDescription) {
+    fn render_playback_clip(
+        &mut self,
+        event_idx: usize,
+        rect: Rect,
+        description: EventDescription,
+    ) {
         if let EventDescription::PlaybackEvent {
             sample: _,
             channel_idx: _,
@@ -630,27 +676,40 @@ impl TimelineRenderer {
                 self.style.window_stroke,
                 egui::StrokeKind::Inside,
             );
-            self.draw_fit_text(
-                rect,
-                Align2::LEFT_TOP,
-                12.0,
-                format!("Clip #{}", clip_idx),
-                self.style.text_color(),
-                TextFit::Hide,
-            );
+            self.draw_text_basic(rect, format!("Clip #{}", clip_idx));
+            self.register_interaction_rect(TimelineInteractable::event_move(
+                "playback_start_drag",
+                self.make_edge_rect(rect, Align2::LEFT_CENTER),
+                event_idx,
+            ));
         }
     }
 
-    fn render_playback_stop(&self, channel_idx: usize, location: u16) -> Rect {
+    fn render_playback_stop(&mut self, event_idx: usize, channel_idx: usize, location: u16) {
         let rect = self.lane_rect(channel_idx + 5, location.into(), self.last_beat());
-        self.draw_text_in_box(
+        let act_rect = self.draw_text_in_box(
             rect.left_center(),
             self.style.text_color(),
             self.style.window_stroke,
             self.style.window_fill,
             12.0,
             "STOP",
-        )
+        );
+        self.register_interaction_rect(TimelineInteractable::new(
+            "playback_stop_drag",
+            act_rect,
+            event_idx,
+            TimelineInteractable::make_event_location_drag(event_idx),
+            Some(Box::new(move |cue, lane| {
+                if let Some(event) = cue.events.get_mut(event_idx as u8)
+                    && let Some(EventDescription::PlaybackStopEvent { channel_idx }) =
+                        event.event.as_mut()
+                {
+                    *channel_idx = lane.saturating_sub(6) as u16;
+                }
+            })),
+            None,
+        ));
     }
 
     pub fn render_jumps(&mut self) {
@@ -662,53 +721,51 @@ impl TimelineRenderer {
                 when_passed,
             }) = event.event
             {
-                let rect = self.render_jump(
-                    event.location,
-                    destination,
-                    when_jumped,
-                    when_passed,
-                    requirement,
-                );
-
-                let (dest_side, loc_side) = if destination > event.location {
-                    (Align2::RIGHT_CENTER, Align2::LEFT_CENTER)
-                } else {
-                    (Align2::LEFT_CENTER, Align2::RIGHT_CENTER)
-                };
-
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "jump_event_drag_location",
-                    self.make_edge_rect(rect, loc_side),
-                    i,
-                    TimelineInteractable::make_event_location_drag(i),
-                    None,
-                    None,
-                ));
-
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "jump_event_drag_destination",
-                    self.make_edge_rect(rect, dest_side),
-                    i,
-                    Some(Box::new(move |cue, beat| {
-                        if let Some(event) = cue.events.get_mut(i as u8)
-                            && let Some(EventDescription::JumpEvent {
-                                destination,
-                                requirement: _,
-                                when_jumped: _,
-                                when_passed: _,
-                            }) = event.event.as_mut()
-                        {
-                            *destination = beat as u16;
-                        }
-                    })),
-                    None,
-                    None,
-                ));
+                self.render_jump(i, event, destination, requirement, when_jumped, when_passed);
             }
         }
     }
 
-    pub fn render_jump(
+    fn render_jump(
+        &mut self,
+        i: usize,
+        event: &event::Event,
+        destination: u16,
+        requirement: JumpRequirement,
+        when_jumped: JumpModeChange,
+        when_passed: JumpModeChange,
+    ) {
+        let rect = self.draw_jump(
+            event.location,
+            destination,
+            when_jumped,
+            when_passed,
+            requirement,
+        );
+
+        let (dest_side, loc_side) = if destination > event.location {
+            (Align2::RIGHT_CENTER, Align2::LEFT_CENTER)
+        } else {
+            (Align2::LEFT_CENTER, Align2::RIGHT_CENTER)
+        };
+
+        self.register_interaction_rect(TimelineInteractable::event_move(
+            "jump_drag_loc",
+            self.make_edge_rect(rect, loc_side),
+            i,
+        ));
+
+        self.register_interaction_rect(TimelineInteractable::new(
+            "jump_event_drag_destination",
+            self.make_edge_rect(rect, dest_side),
+            i,
+            jump_event_destination_drag_interaction(i),
+            None,
+            None,
+        ));
+    }
+
+    pub fn draw_jump(
         &mut self,
         location: u16,
         destination: u16,
@@ -717,17 +774,17 @@ impl TimelineRenderer {
         requirement: JumpRequirement,
     ) -> Rect {
         if destination < location && when_jumped == JumpModeChange::SetOff {
-            self.render_jump_repeat(location, destination)
+            self.draw_jump_repeat(location, destination)
         } else if destination < location {
-            self.render_jump_vamp(location, destination)
+            self.draw_jump_vamp(location, destination)
         } else if requirement == JumpRequirement::JumpModeOff {
-            self.render_jump_volta(location, destination)
+            self.draw_jump_volta(location, destination)
         } else {
-            self.render_jump_skip(location, destination)
+            self.draw_jump_skip(location, destination)
         }
     }
 
-    fn render_jump_repeat(&mut self, location: u16, destination: u16) -> Rect {
+    fn draw_jump_repeat(&mut self, location: u16, destination: u16) -> Rect {
         let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
@@ -748,7 +805,7 @@ impl TimelineRenderer {
         rect
     }
 
-    fn render_jump_vamp(&mut self, location: u16, destination: u16) -> Rect {
+    fn draw_jump_vamp(&mut self, location: u16, destination: u16) -> Rect {
         let rect = self.lane_rect(3, destination.into(), location.into());
         self.painter.rect(
             rect,
@@ -769,7 +826,7 @@ impl TimelineRenderer {
         rect
     }
 
-    fn render_jump_skip(&self, location: u16, destination: u16) -> Rect {
+    fn draw_jump_skip(&self, location: u16, destination: u16) -> Rect {
         if location + 1 == destination {
             return Rect::ZERO;
         }
@@ -795,7 +852,7 @@ impl TimelineRenderer {
         rect
     }
 
-    fn render_jump_volta(&self, location: u16, destination: u16) -> Rect {
+    fn draw_jump_volta(&self, location: u16, destination: u16) -> Rect {
         if location + 1 == destination {
             return Rect::ZERO;
         }
@@ -826,69 +883,82 @@ impl TimelineRenderer {
     fn render_tempo_changes(&mut self) {
         for (i, event) in self.cue.events.clone().iter().enumerate() {
             if let Some(EventDescription::TempoChangeEvent { tempo }) = event.event {
-                let rect = self.lane_rect(2, event.location as usize, self.last_beat());
-                let act_rect = self.render_tempo_change(rect, tempo);
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "tempo_marker_drag",
-                    act_rect,
-                    i,
-                    TimelineInteractable::make_event_location_drag(i),
-                    None,
-                    None,
-                ));
+                self.render_tempo_change(i, event, tempo);
             } else if let Some(EventDescription::GradualTempoChangeEvent {
                 start_tempo,
                 end_tempo,
                 length,
             }) = event.event
             {
-                let rect_a = self.lane_rect(2, event.location as usize, self.last_beat());
-                let rect_b =
-                    self.lane_rect(2, (length + event.location) as usize, self.last_beat());
-                let rect_mid = self.lane_rect(
-                    2,
-                    event.location as usize,
-                    event.location as usize + length as usize - 1,
-                );
-                self.draw_dashed_rect(
-                    rect_mid,
-                    self.style.window_stroke,
-                    self.style.window_stroke.color,
-                    10.0,
-                );
-                let act_rect_a = self.render_tempo_change(rect_a, start_tempo);
-                let act_rect_b = self.render_tempo_change(rect_b, end_tempo);
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "grad_tempo_marker_drag_main",
-                    act_rect_a,
-                    i,
-                    TimelineInteractable::make_event_location_drag(i),
-                    None,
-                    None,
-                ));
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "grad_tempo_marker_drag_end",
-                    act_rect_b,
-                    i,
-                    Some(Box::new(move |cue, beat| {
-                        if let Some(event) = cue.events.get_mut(i as u8)
-                            && let Some(EventDescription::GradualTempoChangeEvent {
-                                start_tempo: _,
-                                end_tempo: _,
-                                length,
-                            }) = event.event.as_mut()
-                        {
-                            *length = beat as u16 - event.location
-                        }
-                    })),
-                    None,
-                    None,
-                ));
+                self.render_gradual_tempo_change(i, event, start_tempo, end_tempo, length);
             }
         }
     }
 
-    fn render_tempo_change(&self, rect: Rect, tempo: u16) -> Rect {
+    fn render_gradual_tempo_change(
+        &mut self,
+        i: usize,
+        event: &event::Event,
+        start_tempo: u16,
+        end_tempo: u16,
+        length: u16,
+    ) {
+        let (act_rect_a, act_rect_b) =
+            self.draw_gradual_tempo_change(event, start_tempo, end_tempo, length);
+        self.register_interaction_rect(TimelineInteractable::event_move(
+            "grad_tempo_marker_drag_main",
+            act_rect_a,
+            i,
+        ));
+        self.register_interaction_rect(TimelineInteractable::new(
+            "grad_tempo_marker_drag_end",
+            act_rect_b,
+            i,
+            grad_tempo_event_length_drag_interaction(i),
+            None,
+            None,
+        ));
+    }
+
+    fn draw_gradual_tempo_change(
+        &mut self,
+        event: &event::Event,
+        start_tempo: u16,
+        end_tempo: u16,
+        length: u16,
+    ) -> (Rect, Rect) {
+        let rect_a = self.lane_rect(2, event.location as usize, self.last_beat());
+        let rect_b = self.lane_rect(2, (length + event.location) as usize, self.last_beat());
+        let rect_mid = self.lane_rect(
+            2,
+            event.location as usize,
+            event.location as usize + length as usize - 1,
+        );
+        self.draw_dashed_rect(
+            rect_mid,
+            self.style.window_stroke,
+            self.style.window_stroke.color,
+            10.0,
+        );
+        let act_rect_a = self.draw_tempo_change(rect_a, start_tempo);
+        let act_rect_b = self.draw_tempo_change(rect_b, end_tempo);
+        (act_rect_a, act_rect_b)
+    }
+
+    fn render_tempo_change(&mut self, i: usize, event: &event::Event, tempo: u16) {
+        let rect = self.lane_rect(2, event.location as usize, self.last_beat());
+        let act_rect = self.draw_tempo_change(rect, tempo);
+        self.register_interaction_rect(TimelineInteractable::new(
+            "tempo_marker_drag",
+            act_rect,
+            i,
+            TimelineInteractable::make_event_location_drag(i),
+            None,
+            None,
+        ));
+    }
+
+    fn draw_tempo_change(&self, rect: Rect, tempo: u16) -> Rect {
         self.draw_text_in_box(
             rect.left_center(),
             self.style.text_color(),
@@ -899,92 +969,136 @@ impl TimelineRenderer {
         )
     }
 
+    fn render_edit_head_animated(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
+        self.render_edit_head(ui.ctx().animate_value_with_time(
+            "edit_cursor_x_location".into(),
+            self.x(app.selected_beat_idx),
+            0.05,
+        ));
+    }
+
     fn render_edit_head(&self, position: f32) {
         self.draw_vertical_line(position, 2, 34, self.style.widgets.active.bg_stroke);
     }
 
     fn render_ltc_events(&mut self, cursor_pos: usize) {
-        let mut time_at_cursor = TimecodeInstant::new(25);
+        for (i, event) in self.cue.events.clone().iter().enumerate() {
+            if let Some(EventDescription::TimecodeEvent {
+                time,
+                properties: _,
+            }) = event.event
+            {
+                self.render_ltc_marker(i, event, time);
+            } else if let Some(EventDescription::TimecodeStopEvent) = event.event {
+                self.render_ltc_stop_marker(i, event);
+            }
+        }
+
+        self.render_ltc_running_blocks();
+        self.render_ltc_at_cursor(cursor_pos);
+    }
+
+    fn render_ltc_stop_marker(&mut self, i: usize, event: &event::Event) {
+        let rect = self.draw_timestop(event);
+
+        self.register_interaction_rect(TimelineInteractable::new(
+            "ltc_stop_marker_drag",
+            rect,
+            i,
+            TimelineInteractable::make_event_location_drag(i),
+            None,
+            None,
+        ));
+    }
+
+    fn render_ltc_marker(&mut self, i: usize, event: &event::Event, time: TimecodeInstant) {
+        let rect = self.draw_timestamp(event.location, time);
+        self.register_interaction_rect(TimelineInteractable::new(
+            "ltc_marker_drag",
+            rect,
+            i,
+            TimelineInteractable::make_event_location_drag(i),
+            None,
+            None,
+        ));
+    }
+
+    fn draw_timestop(&mut self, event: &event::Event) -> Rect {
+        self.draw_text_in_box(
+            pos2(self.x(event.location as usize), self.y_mid(4)),
+            self.style.text_color(),
+            self.style.window_stroke,
+            self.style.extreme_bg_color,
+            12.0,
+            "LTC STOP",
+        )
+    }
+
+    fn render_ltc_running_blocks(&mut self) {
         let mut prev_pos = u16::MAX;
-        let mut last_before_cursor = 0;
         for event in self.cue.events.iter() {
-            if let Some(EventDescription::TimecodeEvent { time, properties: _ }) = event.event {
-                if (event.location as usize) < cursor_pos {
-                    time_at_cursor = time;
-                    last_before_cursor = event.location as usize;
-                }
+            if let Some(EventDescription::TimecodeEvent {
+                time: _,
+                properties: _,
+            }) = event.event
+            {
                 if prev_pos != u16::MAX {
-                    self.draw_dashed_rect(
-                        self.lane_rect(4, prev_pos as usize, event.location as usize - 1),
-                        self.style.window_stroke,
-                        self.style.window_stroke.color,
-                        10.0,
-                    );
+                    let end = event.location as usize - 1;
+                    self.draw_timecode_block(prev_pos, end);
                 }
                 prev_pos = event.location;
             } else if let Some(EventDescription::TimecodeStopEvent) = event.event {
                 if prev_pos != u16::MAX {
-                    self.draw_dashed_rect(
-                        self.lane_rect(4, prev_pos as usize, event.location as usize - 1),
-                        self.style.window_stroke,
-                        self.style.window_stroke.color,
-                        10.0,
-                    );
+                    let end = event.location as usize - 1;
+                    self.draw_timecode_block(prev_pos, end);
                 }
                 prev_pos = u16::MAX;
             }
         }
 
         if prev_pos != u16::MAX {
-            self.draw_dashed_rect(
-                self.lane_rect(4, prev_pos as usize, self.last_beat()),
-                self.style.window_stroke,
-                self.style.window_stroke.color,
-                10.0,
-            );
+            self.draw_timecode_block(prev_pos, self.last_beat());
         }
+    }
 
-        for (i, event) in self.cue.events.clone().iter().enumerate() {
-            if let Some(EventDescription::TimecodeEvent { time, properties: _ }) = event.event {
-                let rect = self.render_timestamp(event.location, time);
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "ltc_marker_drag",
-                    rect,
-                    i,
-                    TimelineInteractable::make_event_location_drag(i),
-                    None,
-                    None,
-                ));
+    fn draw_timecode_block(&self, prev_pos: u16, end: usize) {
+        self.draw_dashed_rect(
+            self.lane_rect(4, prev_pos as usize, end),
+            self.style.window_stroke,
+            self.style.window_stroke.color,
+            10.0,
+        );
+    }
+
+    fn render_ltc_at_cursor(&mut self, cursor_pos: usize) {
+        let mut time_at_cursor = TimecodeInstant::new(25);
+        let mut is_running = false;
+        let mut last_before_cursor = 0;
+        for event in self.cue.events.iter() {
+            if let Some(EventDescription::TimecodeEvent {
+                time,
+                properties: _,
+            }) = event.event
+            {
+                if (event.location as usize) < cursor_pos {
+                    time_at_cursor = time;
+                    last_before_cursor = event.location as usize;
+                }
+                is_running = true;
             } else if let Some(EventDescription::TimecodeStopEvent) = event.event {
-                let rect = self.draw_text_in_box(
-                    pos2(self.x(event.location as usize), self.y_mid(4)),
-                    self.style.text_color(),
-                    self.style.window_stroke,
-                    self.style.extreme_bg_color,
-                    12.0,
-                    "LTC STOP",
-                );
-
-                self.register_interaction_rect(TimelineInteractable::new(
-                    "ltc_stop_marker_drag",
-                    rect,
-                    i,
-                    TimelineInteractable::make_event_location_drag(i),
-                    None,
-                    None,
-                ));
+                is_running = false;
             }
         }
 
-        if prev_pos != u16::MAX {
+        if is_running {
             for beat in &self.cue.beats[last_before_cursor..cursor_pos] {
                 time_at_cursor.add_us(beat.length.into());
             }
+            self.draw_timestamp(cursor_pos as u16, time_at_cursor);
         }
-        self.render_timestamp(cursor_pos as u16, time_at_cursor);
     }
 
-    fn render_timestamp(&mut self, location: u16, time: TimecodeInstant) -> Rect {
+    fn draw_timestamp(&mut self, location: u16, time: TimecodeInstant) -> Rect {
         self.draw_text_in_box(
             pos2(self.x(location as usize), self.y_mid(4)),
             self.style.text_color(),
@@ -995,45 +1109,46 @@ impl TimelineRenderer {
         )
     }
 
+    const TRACK_NAMES: [&'static str; 35] = [
+        "Regions",
+        "Beat ruler",
+        "Tempo",
+        "Jumps & Repeats",
+        "SMPTE Time",
+        "Playback channel 1",
+        "Playback channel 2",
+        "Playback channel 3",
+        "Playback channel 4",
+        "Playback channel 5",
+        "Playback channel 6",
+        "Playback channel 7",
+        "Playback channel 8",
+        "Playback channel 9",
+        "Playback channel 10",
+        "Playback channel 11",
+        "Playback channel 12",
+        "Playback channel 13",
+        "Playback channel 14",
+        "Playback channel 15",
+        "Playback channel 16",
+        "Playback channel 17",
+        "Playback channel 18",
+        "Playback channel 19",
+        "Playback channel 20",
+        "Playback channel 21",
+        "Playback channel 22",
+        "Playback channel 23",
+        "Playback channel 24",
+        "Playback channel 25",
+        "Playback channel 26",
+        "Playback channel 27",
+        "Playback channel 28",
+        "Playback channel 29",
+        "Playback channel 30",
+    ];
+
     fn render_lane_list(&mut self) {
-        let track_names = [
-            "Regions",
-            "Beat ruler",
-            "Tempo",
-            "Jumps & Repeats",
-            "SMPTE Time",
-            "Playback channel 1",
-            "Playback channel 2",
-            "Playback channel 3",
-            "Playback channel 4",
-            "Playback channel 5",
-            "Playback channel 6",
-            "Playback channel 7",
-            "Playback channel 8",
-            "Playback channel 9",
-            "Playback channel 10",
-            "Playback channel 11",
-            "Playback channel 12",
-            "Playback channel 13",
-            "Playback channel 14",
-            "Playback channel 15",
-            "Playback channel 16",
-            "Playback channel 17",
-            "Playback channel 18",
-            "Playback channel 19",
-            "Playback channel 20",
-            "Playback channel 21",
-            "Playback channel 22",
-            "Playback channel 23",
-            "Playback channel 24",
-            "Playback channel 25",
-            "Playback channel 26",
-            "Playback channel 27",
-            "Playback channel 28",
-            "Playback channel 29",
-            "Playback channel 30",
-        ];
-        for (i, text) in track_names.iter().enumerate() {
+        for (i, text) in Self::TRACK_NAMES.iter().enumerate() {
             let rect = Rect::from_min_max(
                 pos2(self.resp.rect.min.x, self.y(i)),
                 pos2(self.left(), self.y_end(i)),
@@ -1055,25 +1170,27 @@ impl TimelineRenderer {
             );
 
             let ccenter = rect.right_top() + rect.height() * vec2(-0.5, 0.5);
-            let radius = 6.0;
-            let arrow_dist = 3.0;
             let stroke = self.style.window_stroke();
-            self.painter.circle_stroke(ccenter, radius, stroke);
-            let midpoint_offset = if self.persistent.lane_collapsed[i] {
-                Vec2::DOWN
-            } else {
-                Vec2::UP
-            };
-            self.painter.line(
-                vec![
-                    ccenter + arrow_dist * Vec2::RIGHT,
-                    ccenter + arrow_dist * Vec2::LEFT,
-                    ccenter + arrow_dist * midpoint_offset,
-                    ccenter + arrow_dist * Vec2::RIGHT,
-                ],
-                stroke,
-            );
+            self.draw_fold_arrow(i, ccenter, 6.0, stroke);
         }
+    }
+
+    fn draw_fold_arrow(&mut self, i: usize, ccenter: Pos2, radius: f32, stroke: Stroke) {
+        self.painter.circle_stroke(ccenter, radius, stroke);
+        let midpoint_offset = if self.persistent.lane_collapsed[i] {
+            Vec2::DOWN
+        } else {
+            Vec2::UP
+        };
+        self.painter.line(
+            vec![
+                ccenter + radius * 0.5 * Vec2::RIGHT,
+                ccenter + radius * 0.5 * Vec2::LEFT,
+                ccenter + radius * 0.5 * midpoint_offset,
+                ccenter + radius * 0.5 * Vec2::RIGHT,
+            ],
+            stroke,
+        );
     }
 
     fn try_zoom(&self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
@@ -1095,428 +1212,114 @@ impl TimelineRenderer {
         self.base_beat_width * mult
     }
 
-    //fn bar_numbers(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    self.blockout_lane(app, ui);
-    //    let p = ui.painter();
-    //    while let Some(beat) = self.next_beat() {
-    //        if beat.count == 1 {
-    //            p.text(
-    //                self.head_text(),
-    //                Align2::LEFT_TOP,
-    //                beat.bar_number.to_string(),
-    //                Self::FONT,
-    //                Color32::GRAY,
-    //            );
-    //        }
-    //    }
-    //}
-
-    //fn timecode(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    self.blockout_lane(app, ui);
-    //    let p = ui.painter();
-    //    let events = self.cue.events.clone();
-    //    let mut cursor = EventCursor::new(&events);
-    //    while let Some(_beat) = self.next_beat() {
-    //        while cursor.at_or_before(self.beat_idx as u16) && let Some(event) = cursor.get_next() {
-    //            if let Some(EventDescription::TimecodeEvent { time, properties }) = event.event {
-    //                p.rect_filled(
-    //                    Rect::from_min_size(
-    //                        self.head,
-    //                        vec2(Self::TEXT_SIZE * 7.0, Self::TEXT_SIZE),
-    //                    ),
-    //                    0.0,
-    //                    Color32::BLACK,
-    //                );
-    //                p.text(
-    //                    self.head_text(),
-    //                    Align2::LEFT_TOP,
-    //                    time.to_string(),
-    //                    Self::FONT,
-    //                    Color32::WHITE,
-    //                );
-    //            }
-    //        }
-    //    }
-    //}
-
-    //fn tempo(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    self.blockout_lane(app, ui);
-    //    let p = ui.painter();
-    //    let mut i: usize = 0;
-    //    let events = self.cue.events.clone();
-    //    let mut cursor = EventCursor::new(&events);
-    //    while let Some(_beat) = self.next_beat() {
-    //        while cursor.at_or_before(self.beat_idx as u16) && let Some(event) = cursor.get_next() {
-    //            if let Some(EventDescription::TempoChangeEvent { tempo }) = event.event {
-    //                p.text(
-    //                    self.head_text(),
-    //                    Align2::LEFT_TOP,
-    //                    tempo,
-    //                    Self::FONT,
-    //                    Color32::YELLOW,
-    //                );
-    //            } else if let Some(EventDescription::GradualTempoChangeEvent {
-    //                start_tempo,
-    //                end_tempo,
-    //                length,
-    //            }) = event.event
-    //            {
-    //                p.text(
-    //                    self.head_text(),
-    //                    Align2::LEFT_TOP,
-    //                    start_tempo,
-    //                    Self::FONT,
-    //                    Color32::YELLOW,
-    //                );
-    //                let mut line_length = 0.0;
-    //                //line_length -= Self::TEXT_SIZE * 2.5;
-    //                for beat_forward in
-    //                    &app.project_file.show.cues[app.selected_cue_idx].beats[i..i + length as usize]
-    //                {
-    //                    line_length += self.beat_width_from_length(beat_forward.length);
-    //                }
-    //                p.line_segment(
-    //                    [
-    //                        self.head + vec2(Self::TEXT_SIZE * 2.5, Self::LANE_HEIGHT / 2.0),
-    //                        self.head + vec2(line_length, Self::LANE_HEIGHT / 2.0),
-    //                    ],
-    //                    Stroke::new(2.0, Color32::YELLOW),
-    //                );
-    //                p.text(
-    //                    self.head_text() + vec2(line_length, 0.0),
-    //                    Align2::LEFT_TOP,
-    //                    end_tempo,
-    //                    Self::FONT,
-    //                    Color32::YELLOW,
-    //                );
-    //            }
-    //        }
-    //        i += 1;
-    //    }
-    //}
-
-    //fn rehearsal_marks(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    self.blockout_lane(app, ui);
-    //    let p = ui.painter();
-    //    let events = self.cue.events.clone();
-    //    let mut cursor = EventCursor::new(&events);
-    //    while let Some(_beat) = self.next_beat() {
-    //        while cursor.at_or_before(self.beat_idx as u16) && let Some(event) = cursor.get_next() {
-    //            if let Some(EventDescription::RehearsalMarkEvent { label }) = event.event {
-    //                p.text(
-    //                    self.head_text(),
-    //                    Align2::LEFT_TOP,
-    //                    label.str(),
-    //                    Self::FONT,
-    //                    Color32::RED,
-    //                );
-    //                p.line_segment(
-    //                    [self.head, self.head + vec2(0.0, Self::LANE_HEIGHT)],
-    //                    Stroke::new(2.0, Color32::RED),
-    //                );
-    //            }
-    //        }
-    //    }
-    //}
-
-    //fn jumps(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    self.blockout_lane(app, ui);
-    //    let p = ui.painter();
-    //    let events = self.cue.events.clone();
-    //    let mut cursor = EventCursor::new(&events);
-    //    while let Some(_beat) = self.next_beat() {
-    //        while cursor.at_or_before(self.beat_idx as u16) && let Some(event) = cursor.get_next() {
-    //            match event.event {
-    //                Some(EventDescription::JumpEvent {
-    //                    destination,
-    //                    requirement,
-    //                    when_jumped,
-    //                    when_passed,
-    //                }) => {
-    //                    p.text(
-    //                        self.head,
-    //                        Align2::LEFT_TOP,
-    //                        match (requirement, when_jumped, when_passed) {
-    //                            (JumpRequirement::JumpModeOff, _, _) => {
-    //                                // Volta
-    //                                egui_material_icons::icons::ICON_STEP_OVER
-    //                            }
-    //                            (_, JumpModeChange::SetOff, _) => {
-    //                                // Repeat
-    //                                egui_material_icons::icons::ICON_REPEAT_ONE
-    //                            }
-    //                            (JumpRequirement::JumpModeOn, _, _) => {
-    //                                // Repeat
-    //                                egui_material_icons::icons::ICON_REPEAT
-    //                            }
-    //                            _ => egui_material_icons::icons::ICON_STEP_OUT,
-    //                        },
-    //                        FontId {
-    //                            size: Self::FONT.size * 1.1,
-    //                            family: egui::FontFamily::Monospace,
-    //                        },
-    //                        Color32::YELLOW,
-    //                    );
-    //                    p.text(
-    //                        self.head_at_idx(destination as usize),
-    //                        Align2::LEFT_TOP,
-    //                        egui_material_icons::icons::ICON_STEP_INTO,
-    //                        FontId {
-    //                            size: Self::FONT.size * 1.1,
-    //                            family: egui::FontFamily::Monospace,
-    //                        },
-    //                        Color32::YELLOW,
-    //                    );
-    //                }
-    //                Some(EventDescription::PauseEvent { behaviour: _ }) => {
-    //                    p.text(
-    //                        self.head,
-    //                        Align2::LEFT_TOP,
-    //                        egui_material_icons::icons::ICON_PAUSE,
-    //                        FontId {
-    //                            size: Self::FONT.size * 1.1,
-    //                            family: egui::FontFamily::Monospace,
-    //                        },
-    //                        Color32::YELLOW,
-    //                    );
-    //                }
-    //                _ => {}
-    //            }
-    //        }
-    //    }
-    //}
-
-    //fn playbacks(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    let clip_height = Self::LANE_HEIGHT * 2.4;
-
-    //    let p = ui.painter();
-    //    let events = self.cue.events.clone();
-    //    let mut cursor = EventCursor::new(&events);
-    //    while let Some(beat) = self.next_beat() {
-    //        while cursor.at_or_before(self.beat_idx as u16) && let Some(event) = cursor.get_next() {
-    //        // Events, i.e. playback start or playback stop get triggered once at the beat they
-    //        // occur
-    //            if let Some(EventDescription::PlaybackEvent {
-    //                channel_idx,
-    //                clip_idx,
-    //                sample,
-    //            }) = event.event
-    //            {
-    //                self.running_clips.push(RunningClip {
-    //                    channel_idx: channel_idx.into(),
-    //                    clip_idx: clip_idx.into(),
-    //                    sample,
-    //                    sample_offset_from_start: self.time_head * 48 / 1000,
-    //                });
-    //                p.line(
-    //                    vec![
-    //                        self.head + vec2(0.0, channel_idx as f32 * clip_height),
-    //                        self.head + vec2(0.0, (channel_idx + 1) as f32 * clip_height),
-    //                    ],
-    //                    Stroke::new(3.0, Color32::GREEN),
-    //                );
-    //            } else if let Some(EventDescription::PlaybackStopEvent {
-    //                channel_idx: stop_channel_idx,
-    //            }) = event.event
-    //            {
-    //                self.running_clips
-    //                    .retain(|e| e.channel_idx != stop_channel_idx as usize);
-    //                p.line(
-    //                    vec![
-    //                        self.head + vec2(0.0, stop_channel_idx as f32 * clip_height),
-    //                        self.head + vec2(0.0, (stop_channel_idx + 1) as f32 * clip_height),
-    //                    ],
-    //                    Stroke::new(3.0, Color32::DARK_RED),
-    //                );
-    //            }
-    //        }
-
-    //        // Clips running get triggered every beat until they end in a playback stop event, or
-    //        // until the end of the cue
-    //        for clip in self.running_clips.clone() {
-    //            let beat_width = self.beat_width();
-    //            p.rect_filled(
-    //                Rect::from_min_max(
-    //                    self.head + vec2(0.0, clip.channel_idx as f32 * clip_height),
-    //                    self.head + vec2(beat_width, (clip.channel_idx + 1) as f32 * clip_height),
-    //                ),
-    //                0.0,
-    //                Color32::BLUE.gamma_multiply(0.5),
-    //            );
-
-    //            // Waveform
-    //            let sample_head =
-    //                self.time_head * 48 / 1000 - clip.sample_offset_from_start + clip.sample as i64;
-    //            let sample_len = beat.length as i64 * 48 / 1000;
-    //            let start_bucket = sample_head / ClipManager::PEAK_BUCKET_SIZE as i64;
-    //            let end_bucket = (sample_head + sample_len) / ClipManager::PEAK_BUCKET_SIZE as i64;
-    //            let bucket_width =
-    //                beat_width / (sample_len / ClipManager::PEAK_BUCKET_SIZE as i64) as f32;
-    //            for bucket_idx in start_bucket..end_bucket {
-    //                let bucket_head = self.head
-    //                    + vec2(
-    //                        bucket_width * (bucket_idx - start_bucket) as f32,
-    //                        clip.channel_idx as f32 * clip_height,
-    //                    );
-
-    //                let bucket_val = match app
-    //                    .clip_manager
-    //                    .clips
-    //                    .get(&(clip.channel_idx, clip.clip_idx))
-    //                {
-    //                    Some(clip) => {
-    //                        if (bucket_idx as usize) < clip.peak_buckets.len() {
-    //                            clip.peak_buckets[bucket_idx as usize]
-    //                        } else {
-    //                            0.0
-    //                        }
-    //                    }
-    //                    None => 0.0,
-    //                };
-    //                let center_y = vec2(0.0, clip_height / 2.0);
-    //                let height_push = clip_height / 2.0 * bucket_val.abs();
-    //                p.line_segment(
-    //                    [
-    //                        bucket_head + center_y - vec2(0.0, height_push),
-    //                        bucket_head + center_y + vec2(0.0, height_push),
-    //                    ],
-    //                    Stroke::new(bucket_width.ceil(), Color32::WHITE),
-    //                );
-    //            }
-    //        }
-    //    }
-    //}
-
-    //fn background(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    let sel_beat = self.cue.beats[app.selected_beat_idx].clone();
-    //    let p = ui.painter();
-
-    //    let mut beat_rect = Rect::from_min_max(self.rect.min, self.rect.min);
-    //    for (i, beat) in self.cue.beats.iter().enumerate() {
-    //        if beat.is_null() {
-    //            break;
-    //        }
-    //        beat_rect.max =
-    //            beat_rect.min + vec2(self.beat_width_from_length(beat.length), self.rect.height());
-
-    //        // Selected beat marker
-    //        if app.selected_beat_idx == i {
-    //            p.rect_filled(beat_rect, 0.0, Color32::DARK_GREEN);
-    //        }
-
-    //        // Selected measure marker
-    //        if beat.bar_number == sel_beat.bar_number {
-    //            ui.scroll_to_rect(beat_rect, None);
-    //            p.rect_filled(beat_rect, 0.0, Color32::DARK_GREEN.gamma_multiply(0.5));
-    //        }
-
-    //        // CI measure marker
-    //        if beat.bar_number == 0 {
-    //            p.rect_filled(beat_rect, 0.0, Color32::DARK_RED.gamma_multiply(0.5));
-    //        }
-
-    //        // Hovered beat marker
-    //        if ui.rect_contains_pointer(beat_rect) {
-    //            p.rect_filled(beat_rect, 0.0, Color32::GRAY.gamma_multiply(0.2));
-    //            if self.resp.clicked() {
-    //                app.selected_beat_idx = i;
-    //            }
-    //        }
-
-    //        // Downbeat line and text
-    //        if beat.count == 1 {
-    //            p.line_segment(
-    //                [beat_rect.left_top(), beat_rect.left_bottom()],
-    //                Stroke::new(1.0, Color32::GRAY),
-    //            );
-    //        }
-    //        // Other beats
-    //        else {
-    //            p.line_segment(
-    //                [beat_rect.left_top(), beat_rect.left_bottom()],
-    //                Stroke::new(1.0, Color32::DARK_GRAY),
-    //            );
-    //        }
-    //        beat_rect.min.x = beat_rect.max.x;
-    //    }
-    //}
-
-    //fn blockout_lane(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-    //    let p = ui.painter();
-
-    //    p.rect_filled(
-    //        Rect::from_min_max(
-    //            self.head,
-    //            pos2(self.rect.max.x, self.head.y + Self::LANE_HEIGHT),
-    //        ),
-    //        0,
-    //        ui.style().visuals.window_fill().gamma_multiply(0.5),
-    //    );
-    //}
-
-    fn handle_interaction(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
-        let cue = &mut app.project_file.show.cues[app.selected_cue_idx];
-
+    fn handle_interaction(&mut self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) -> Option<()> {
         let clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
         let mouse_just_down = ui.input(|i| i.pointer.primary_pressed());
         let mouse_down = ui.input(|i| i.pointer.primary_down());
         let dragged = mouse_down && ui.input(|i| i.pointer.is_moving());
-        let pos = ui.input(|i| i.pointer.interact_pos());
+        let pos = ui.input(|i| i.pointer.interact_pos())?;
+
+        let ongoing = self
+            .find_hashed_interaction(app.current_interaction_hash?)
+            .or(self.handle_hover_click(app, clicked, mouse_just_down, pos));
+
+        let cue = &mut app.project_file.show.cues[app.selected_cue_idx];
+        if let Some(interaction) = ongoing {
+            ui.ctx().set_cursor_icon(cursor_icon_from_drag(interaction));
+            self.handle_drag(cue, dragged, interaction, pos);
+        }
 
         if !mouse_down {
-            app.current_interaction_hash = 0;
+            app.current_interaction_hash = None;
             cue.events.sort();
             cue.recalculate_tempo_changes();
         }
+        None
+    }
 
-        for interaction in &self.interactions {
-            //self.painter
-            //    .rect_filled(interaction.rect, 0.0, Color32::MAGENTA);
+    fn handle_hover_click(
+        &self,
+        app: &mut ClicksEditorApp,
+        clicked: bool,
+        mouse_just_down: bool,
+        pos: Pos2,
+    ) -> Option<&TimelineInteractable> {
+        let hovered = self.find_hovered_interaction(pos);
 
-            if let Some(pos) = pos {
-                let mut cursor_change = false;
-                if interaction.rect.contains(pos) {
-                    cursor_change = true;
-
-                    if mouse_just_down {
-                        app.current_interaction_hash = interaction.hash;
-                        break;
-                    }
-
-                    if clicked && let Some(event_idx) = interaction.event_idx {
-                        app.selected_event_idx = event_idx
-                    }
-                }
-
-                if interaction.hash == app.current_interaction_hash {
-                    cursor_change = true;
-                    if dragged && let Some(drag_x) = &interaction.drag_x {
-                        let beat = self.beat_at_x(pos.x).saturating_sub(1);
-                        (drag_x)(cue, beat)
-                    }
-                    if dragged && let Some(drag_y) = &interaction.drag_y {
-                        let lane = self.lane_at_y(pos.y);
-                        (drag_y)(cue, lane)
-                    }
-                }
-                if cursor_change {
-                    //self.painter.rect_stroke(
-                    //    interaction.rect,
-                    //    5.0,
-                    //    Stroke::new(1.0, self.style.text_color()),
-                    //    egui::StrokeKind::Outside,
-                    //);
-                    ui.ctx().set_cursor_icon(
-                        match (interaction.drag_x.is_some(), interaction.drag_y.is_some()) {
-                            (true, true) => CursorIcon::Move,
-                            (false, true) => CursorIcon::ResizeVertical,
-                            (true, false) => CursorIcon::ResizeHorizontal,
-                            (false, false) => CursorIcon::Default,
-                        },
-                    );
-                }
+        if let Some(interaction) = hovered {
+            if mouse_just_down {
+                app.current_interaction_hash = Some(interaction.hash);
+            }
+            if clicked && let Some(event_idx) = interaction.event_idx {
+                app.selected_event_idx = event_idx
             }
         }
+        hovered
+    }
+
+    fn find_hashed_interaction(&self, hash: u64) -> Option<&TimelineInteractable> {
+        self.interactions.iter().find(|&inter| inter.hash == hash)
+    }
+
+    fn find_hovered_interaction(&self, pointer_pos: Pos2) -> Option<&TimelineInteractable> {
+        self.interactions
+            .iter()
+            .find(|&inter| inter.rect.contains(pointer_pos))
+    }
+
+    fn handle_drag(
+        &self,
+        cue: &mut Cue,
+        dragged: bool,
+        interaction: &TimelineInteractable,
+        pos: Pos2,
+    ) {
+        if dragged && let Some(drag_x) = &interaction.drag_x {
+            let beat = self.beat_at_x(pos.x).saturating_sub(1);
+            (drag_x)(cue, beat)
+        }
+        if dragged && let Some(drag_y) = &interaction.drag_y {
+            let lane = self.lane_at_y(pos.y);
+            (drag_y)(cue, lane)
+        }
+    }
+}
+
+fn grad_tempo_event_length_drag_interaction(i: usize) -> InteractionFunction {
+    Some(Box::new(move |cue, beat| {
+        if let Some(event) = cue.events.get_mut(i as u8)
+            && let Some(EventDescription::GradualTempoChangeEvent {
+                start_tempo: _,
+                end_tempo: _,
+                length,
+            }) = event.event.as_mut()
+        {
+            *length = beat as u16 - event.location
+        }
+    }))
+}
+
+fn jump_event_destination_drag_interaction(i: usize) -> InteractionFunction {
+    Some(Box::new(move |cue, beat| {
+        if let Some(event) = cue.events.get_mut(i as u8)
+            && let Some(EventDescription::JumpEvent {
+                destination,
+                requirement: _,
+                when_jumped: _,
+                when_passed: _,
+            }) = event.event.as_mut()
+        {
+            *destination = beat as u16;
+        }
+    }))
+}
+
+fn cursor_icon_from_drag(interaction: &TimelineInteractable) -> CursorIcon {
+    match (interaction.drag_x.is_some(), interaction.drag_y.is_some()) {
+        (true, true) => CursorIcon::Move,
+        (false, true) => CursorIcon::ResizeVertical,
+        (true, false) => CursorIcon::ResizeHorizontal,
+        (false, false) => CursorIcon::Default,
     }
 }
 
@@ -1533,67 +1336,10 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     }
 
     let persistent = TimelinePersistent::default();
-    let mut tlr = TimelineRenderer::new(
-        app,
-        ui,
-        cue,
-        persistent,
-        app.ctx
-            .animate_bool("proportional_scaling".into(), app.proportional_beat_length),
-    );
-
-    let stroke = ui.style().visuals.widgets.noninteractive.bg_stroke;
-
-    let show_individual_beats = tlr.beat_width_from_length(500000) > 20.0;
-    if show_individual_beats {
-        tlr.draw_beat_separators(stroke);
-    } else {
-        tlr.draw_bar_separators(stroke);
-    }
-    tlr.render_ruler(show_individual_beats);
-    tlr.draw_lane_separators(stroke);
-    tlr.render_regions();
-    tlr.render_ltc_events(app.selected_beat_idx);
-
-    tlr.render_playback();
-
-    tlr.render_edit_head(ui.ctx().animate_value_with_time(
-        "edit_cursor_x_location".into(),
-        tlr.x(app.selected_beat_idx),
-        0.05,
-    ));
-    tlr.render_jumps();
-    tlr.render_tempo_changes();
-
-    const DEADZONE: f32 = 150.0;
-    if tlr.x(app.selected_beat_idx) > tlr.right() - DEADZONE {
-        app.pan += Vec2::RIGHT * (tlr.x(app.selected_beat_idx) - tlr.right() + DEADZONE)
-            / ui.style().animation_time
-            * 0.02
-    }
-    if tlr.x(app.selected_beat_idx) < tlr.left() + DEADZONE {
-        app.pan += Vec2::RIGHT * (tlr.x(app.selected_beat_idx) - tlr.left() - DEADZONE)
-            / ui.style().animation_time
-            * 0.02
-    }
-
-    tlr.render_lane_list();
-
-    //tlr.background(app, ui);
-
-    //tlr.jumps(app, ui);
-    //tlr.next_lane();
-    //tlr.bar_numbers(app, ui);
-    //tlr.next_lane();
-    //tlr.timecode(app, ui);
-    //tlr.next_lane();
-    //tlr.tempo(app, ui);
-    //tlr.next_lane();
-    //tlr.rehearsal_marks(app, ui);
-    //tlr.next_lane();
-    //tlr.playbacks(app, ui);
-
-    tlr.try_zoom(app, ui);
-
-    tlr.handle_interaction(app, ui);
+    let proportional_scaling = app
+        .ctx
+        .animate_bool("proportional_scaling".into(), app.proportional_beat_length);
+    TimelineRenderer::new(app, ui, cue, persistent)
+        .with_proportional_scaling(proportional_scaling)
+        .show(app, ui);
 }

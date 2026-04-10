@@ -21,7 +21,7 @@ pub struct ClicksEditorApp {
     pub selected_event_idx: usize,
     pub zoom: f32,
     #[serde(skip)]
-    pub current_interaction_hash: u64,
+    pub current_interaction_hash: Option<u64>,
     pub proportional_beat_length: bool,
     pub left_display_select: DisplaySelect,
     #[serde(skip)]
@@ -80,8 +80,7 @@ impl ProjectFile {
         }
 
         // Serialize show into show.bin
-        let res = postcard::to_stdvec::<Show>(&self.show)
-            .map_err(std::io::Error::other)?;
+        let res = postcard::to_stdvec::<Show>(&self.show).map_err(std::io::Error::other)?;
         std::fs::write(path.join("show.bin"), &res)?;
 
         Ok(())
@@ -164,7 +163,7 @@ impl Default for ClicksEditorApp {
             left_display_select: DisplaySelect::Cues,
             clip_manager: ClipManager::default(),
             last_action: None,
-            current_interaction_hash: 0,
+            current_interaction_hash: None,
         }
     }
 }
