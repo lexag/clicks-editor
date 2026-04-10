@@ -489,7 +489,11 @@ impl TimelineRenderer {
                     } else {
                         format!("{}", beat.bar_number)
                     },
-                    self.style.strong_text_color(),
+                    if beat.count == 1 {
+                        self.style.strong_text_color()
+                    } else {
+                        self.style.weak_text_color()
+                    },
                     TextFit::Hide,
                 );
                 dist_since_last = 0.0;

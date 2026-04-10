@@ -1,11 +1,13 @@
-use crate::{
-    app::ClicksEditorApp,
-};
+use crate::app::ClicksEditorApp;
 use common::{
     beat::Beat,
     cue::{Cue, CueMetadata, Show},
     event::{Event, EventDescription, JumpModeChange, JumpRequirement},
-    mem::{smpte::{TimecodeInstant, TimecodeProperties}, str::StaticString},
+    local::status::PlaybackHandlerStatus,
+    mem::{
+        smpte::{TimecodeInstant, TimecodeProperties},
+        str::StaticString,
+    },
 };
 use egui::{Color32, Image, Key, KeyboardShortcut, ModifierNames, Modifiers};
 
@@ -166,6 +168,25 @@ macro_rules! has_beat {
     };
 }
 
+fn delete_beat(app: &mut ClicksEditorApp, idx: usize) {
+    let events: Vec<Event> = cue_mut!(app).events.iter().cloned().collect();
+    for (i, event) in events.iter().enumerate().rev() {
+        if event.location == idx as u16 {
+            cue_mut!(app).events.pop(i as u8);
+        }
+    }
+    cue_mut!(app).events.shift_events(idx as u16, -1);
+    cue_mut!(app).beats.remove(app.selected_beat_idx);
+}
+
+fn delete_beats(app: &mut ClicksEditorApp, idxs: Vec<usize>) {
+    let mut idxs = idxs.clone();
+    idxs.sort();
+    for idx in idxs.iter().rev() {
+        delete_beat(app, *idx);
+    }
+}
+
 pub fn all_actions() -> Vec<Action> {
     let mut ret = vec![];
     for cat_id in categories() {
@@ -275,6 +296,9 @@ pub fn action(action_id: &str) -> Action {
                     );
                     app.selected_beat_idx += 1;
                 }
+                cue_mut!(app)
+                    .events
+                    .shift_events(app.selected_beat_idx as u16 + 1, 1);
                 cue_mut!(app).reorder_numbers();
                 (action("cue:recalculate_tempo_changes").function)(app);
             },
@@ -300,6 +324,9 @@ pub fn action(action_id: &str) -> Action {
                         ..Default::default()
                     },
                 );
+                cue_mut!(app)
+                    .events
+                    .shift_events(app.selected_beat_idx as u16 + 1, 1);
                 app.selected_beat_idx += 1;
                 cue_mut!(app).reorder_numbers();
                 (action("cue:recalculate_tempo_changes").function)(app);
@@ -320,15 +347,16 @@ pub fn action(action_id: &str) -> Action {
                 let beat = beat!(app);
                 let num_beats = sel_bar_length!(app);
                 for i in 0..num_beats {
-                    cue_mut!(app).beats.push(
-                        Beat {
-                            count: (i + 1) as u8,
-                            bar_number: beat.bar_number + 1,
-                            ..Default::default()
-                        },
-                    );
+                    cue_mut!(app).beats.push(Beat {
+                        count: (i + 1) as u8,
+                        bar_number: beat.bar_number + 1,
+                        ..Default::default()
+                    });
                 }
-                    app.selected_beat_idx = cue!(app).beats.len() - 1;
+                cue_mut!(app)
+                    .events
+                    .shift_events(app.selected_beat_idx as u16 + 1, num_beats as i16);
+                app.selected_beat_idx = cue!(app).beats.len() - 1;
                 cue_mut!(app).reorder_numbers();
                 (action("cue:recalculate_tempo_changes").function)(app);
             },
@@ -345,7 +373,7 @@ pub fn action(action_id: &str) -> Action {
             name_concise: "Delete".to_string(),
             icon: egui_material_icons::icons::ICON_CLOSE.to_string(),
             function: |app| {
-                cue_mut!(app).beats.remove(app.selected_beat_idx);
+                delete_beat(app, app.selected_beat_idx);
                 app.selected_beat_idx = app.selected_beat_idx.saturating_sub(1);
                 cue_mut!(app).reorder_numbers();
             },
@@ -363,15 +391,15 @@ pub fn action(action_id: &str) -> Action {
             icon: egui_material_icons::icons::ICON_REMOVE_FROM_QUEUE.to_string(),
             function: |app| {
                 let beat = beat!(app);
-                let len_pre = cue!(app).beats.len();
-                let mut beat_vec = cue!(app)
+                let beat_vec = cue!(app)
                     .beats
                     .iter()
-                    .filter(|b| b.bar_number != beat.bar_number)
                     .cloned()
-                    .collect::<Vec<Beat>>();
-                app.selected_beat_idx -= len_pre - cue!(app).beats.len();
-                cue_mut!(app).beats = beat_vec;
+                    .enumerate()
+                    .filter(|t| t.1.bar_number == beat.bar_number)
+                    .collect::<Vec<(usize, Beat)>>();
+                delete_beats(app, beat_vec.iter().map(|p| p.0).collect());
+                app.selected_beat_idx -= beat_vec.len();
                 cue_mut!(app).reorder_numbers();
             },
             interactible: |app| has_beat!(app),
@@ -419,6 +447,7 @@ pub fn action(action_id: &str) -> Action {
                         },
                     );
                 }
+                cue_mut!(app).events.shift_events(0, num_to_add as i16);
                 app.selected_beat_idx = sel_pre + num_to_add;
                 cue_mut!(app).reorder_numbers();
             },
@@ -564,7 +593,7 @@ pub fn action(action_id: &str) -> Action {
                     app.selected_beat_idx as u16,
                     EventDescription::TimecodeEvent {
                         time: TimecodeInstant::new(25),
-                        properties: TimecodeProperties::default()
+                        properties: TimecodeProperties::default(),
                     },
                 ));
             },
@@ -952,7 +981,7 @@ pub fn action(action_id: &str) -> Action {
             function: |app| {
                 if let Some(dir) = crate::io::pick_dir() {
                     let _ = app.project_file.load(dir);
-                    action("show:refresh_audio_clips").run(app);  
+                    action("show:refresh_audio_clips").run(app);
                 }
             },
             interactible: |app| true,
@@ -1012,13 +1041,15 @@ pub fn action(action_id: &str) -> Action {
             name_concise: "Import".to_string(),
             icon: egui_material_icons::icons::ICON_FILE_OPEN.to_string(),
             function: |app| {
-    if let Some(dir) = crate::io::pick_file() && let Err(err) = app.project_file.import_json(dir.clone()) {
-        crate::io::show_dialog(
-            rfd::MessageLevel::Error,
-            "Import failed".to_string(),
-            err.to_string(),
-        );
-    }
+                if let Some(dir) = crate::io::pick_file()
+                    && let Err(err) = app.project_file.import_json(dir.clone())
+                {
+                    crate::io::show_dialog(
+                        rfd::MessageLevel::Error,
+                        "Import failed".to_string(),
+                        err.to_string(),
+                    );
+                }
             },
             interactible: |app| true,
             active: |app| false,
@@ -1030,13 +1061,15 @@ pub fn action(action_id: &str) -> Action {
             name_concise: "Export".to_string(),
             icon: egui_material_icons::icons::ICON_FILE_SAVE.to_string(),
             function: |app| {
-    if let Some(dir) = crate::io::save_file() && let Err(err) = app.project_file.export_json(dir.clone()) {
-        crate::io::show_dialog(
-            rfd::MessageLevel::Error,
-            "Export failed".to_string(),
-            err.to_string(),
-        );
-    }
+                if let Some(dir) = crate::io::save_file()
+                    && let Err(err) = app.project_file.export_json(dir.clone())
+                {
+                    crate::io::show_dialog(
+                        rfd::MessageLevel::Error,
+                        "Export failed".to_string(),
+                        err.to_string(),
+                    );
+                }
             },
             interactible: |app| true,
             active: |app| false,
