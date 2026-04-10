@@ -56,6 +56,7 @@ pub struct TimelineInteractable {
     rect: Rect,
     drag_x: InteractionFunction,
     drag_y: InteractionFunction,
+    click: InteractionFunction,
     event_idx: Option<usize>,
     hash: u64,
 }
@@ -67,8 +68,9 @@ impl TimelineInteractable {
         event_idx: usize,
         drag_x: InteractionFunction,
         drag_y: InteractionFunction,
+        click: InteractionFunction,
     ) -> Self {
-        Self::new_opt(salt, rect, Some(event_idx), drag_x, drag_y)
+        Self::new_opt(salt, rect, Some(event_idx), drag_x, drag_y, click)
     }
 
     pub fn new_opt(
@@ -77,10 +79,12 @@ impl TimelineInteractable {
         event_idx: Option<usize>,
         drag_x: InteractionFunction,
         drag_y: InteractionFunction,
+        click: InteractionFunction,
     ) -> Self {
         Self {
             rect,
             drag_x,
+            click,
             drag_y,
             event_idx,
             hash: 0,
@@ -89,7 +93,7 @@ impl TimelineInteractable {
     }
 
     pub fn basic(salt: impl Into<String>, rect: Rect, event_idx: usize) -> Self {
-        Self::new(salt, rect, event_idx, None, None)
+        Self::new(salt, rect, event_idx, None, None, None)
     }
 
     pub fn drag(
@@ -98,13 +102,16 @@ impl TimelineInteractable {
         drag_x: InteractionFunction,
         drag_y: InteractionFunction,
     ) -> Self {
-        Self::new_opt(salt, rect, None, drag_x, drag_y)
+        Self::new_opt(salt, rect, None, drag_x, drag_y, None)
     }
     pub fn drag_x(salt: impl Into<String>, rect: Rect, drag_x: InteractionFunction) -> Self {
-        Self::new_opt(salt, rect, None, drag_x, None)
+        Self::new_opt(salt, rect, None, drag_x, None, None)
     }
     pub fn drag_y(salt: impl Into<String>, rect: Rect, drag_y: InteractionFunction) -> Self {
-        Self::new_opt(salt, rect, None, None, drag_y)
+        Self::new_opt(salt, rect, None, None, drag_y, None)
+    }
+    pub fn click(salt: impl Into<String>, rect: Rect, click: InteractionFunction) -> Self {
+        Self::new_opt(salt, rect, None, None, None, click)
     }
 
     fn hash(&self, salt: String) -> u64 {
@@ -247,7 +254,7 @@ impl TimelineRenderer {
         self.y(idx) + self.y_size(idx)
     }
 
-    const TRACK_PANEL_WIDTH: f32 = 200.0;
+    const TRACK_PANEL_WIDTH: f32 = 150.0;
 
     fn left(&self) -> f32 {
         self.resp.rect.left() + Self::TRACK_PANEL_WIDTH
@@ -513,6 +520,7 @@ impl TimelineRenderer {
                 region.3,
                 TimelineInteractable::make_event_location_drag(region.3),
                 None,
+                None,
             ));
         }
     }
@@ -582,6 +590,7 @@ impl TimelineRenderer {
                     clip.0,
                     TimelineInteractable::make_event_location_drag(clip.0),
                     None,
+                    None,
                 ));
             }
         }
@@ -602,6 +611,7 @@ impl TimelineRenderer {
                             *channel_idx = lane.saturating_sub(6) as u16;
                         }
                     })),
+                    None,
                 ));
             }
         }
@@ -673,6 +683,7 @@ impl TimelineRenderer {
                     i,
                     TimelineInteractable::make_event_location_drag(i),
                     None,
+                    None,
                 ));
 
                 self.register_interaction_rect(TimelineInteractable::new(
@@ -691,6 +702,7 @@ impl TimelineRenderer {
                             *destination = beat as u16;
                         }
                     })),
+                    None,
                     None,
                 ));
             }
@@ -823,6 +835,7 @@ impl TimelineRenderer {
                     i,
                     TimelineInteractable::make_event_location_drag(i),
                     None,
+                    None,
                 ));
             } else if let Some(EventDescription::GradualTempoChangeEvent {
                 start_tempo,
@@ -852,6 +865,7 @@ impl TimelineRenderer {
                     i,
                     TimelineInteractable::make_event_location_drag(i),
                     None,
+                    None,
                 ));
                 self.register_interaction_rect(TimelineInteractable::new(
                     "grad_tempo_marker_drag_end",
@@ -868,6 +882,7 @@ impl TimelineRenderer {
                             *length = beat as u16 - event.location
                         }
                     })),
+                    None,
                     None,
                 ));
             }
@@ -939,6 +954,7 @@ impl TimelineRenderer {
                     i,
                     TimelineInteractable::make_event_location_drag(i),
                     None,
+                    None,
                 ));
             } else if let Some(EventDescription::TimecodeStopEvent) = event.event {
                 let rect = self.draw_text_in_box(
@@ -955,6 +971,7 @@ impl TimelineRenderer {
                     rect,
                     i,
                     TimelineInteractable::make_event_location_drag(i),
+                    None,
                     None,
                 ));
             }
@@ -979,8 +996,8 @@ impl TimelineRenderer {
         )
     }
 
-    fn render_lane_list(&self) {
-        for (i, text) in [
+    fn render_lane_list(&mut self) {
+        let track_names = [
             "Regions",
             "Beat ruler",
             "Tempo",
@@ -1016,10 +1033,8 @@ impl TimelineRenderer {
             "Playback channel 28",
             "Playback channel 29",
             "Playback channel 30",
-        ]
-        .iter()
-        .enumerate()
-        {
+        ];
+        for (i, text) in track_names.iter().enumerate() {
             let rect = Rect::from_min_max(
                 pos2(self.resp.rect.min.x, self.y(i)),
                 pos2(self.left(), self.y_end(i)),
@@ -1033,11 +1048,31 @@ impl TimelineRenderer {
             );
             self.draw_fit_text(
                 rect,
-                Align2::RIGHT_CENTER,
+                Align2::LEFT_CENTER,
                 12.0,
                 *text,
                 self.style.text_color(),
                 TextFit::Hide,
+            );
+
+            let ccenter = rect.right_top() + rect.height() * vec2(-0.5, 0.5);
+            let radius = 6.0;
+            let arrow_dist = 3.0;
+            let stroke = self.style.window_stroke();
+            self.painter.circle_stroke(ccenter, radius, stroke);
+            let midpoint_offset = if self.persistent.lane_collapsed[i] {
+                Vec2::DOWN
+            } else {
+                Vec2::UP
+            };
+            self.painter.line(
+                vec![
+                    ccenter + arrow_dist * Vec2::RIGHT,
+                    ccenter + arrow_dist * Vec2::LEFT,
+                    ccenter + arrow_dist * midpoint_offset,
+                    ccenter + arrow_dist * Vec2::RIGHT,
+                ],
+                stroke,
             );
         }
     }
