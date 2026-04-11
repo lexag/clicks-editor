@@ -764,6 +764,20 @@ pub fn action(action_id: &str) -> Action {
             active: |_app| false,
             hotkey: None,
         },
+        "event:delete_selected_event" => Action {
+            symbol: '+',
+            name_global: "Delete event".to_string(),
+            name_concise: "Delete".to_string(),
+            icon: egui_material_icons::icons::ICON_DELETE.to_string(),
+            function: |app| {
+                if let Ok(idx) = app.selected_event_idx.try_into() {
+                    cue_mut!(app).events.pop(idx);
+                }
+            },
+            interactible: |app| has_beat!(app),
+            active: |_app| false,
+            hotkey: None,
+        },
         "show:add_cue" => Action {
             symbol: 'x',
             name_global: "Add cue".to_string(),

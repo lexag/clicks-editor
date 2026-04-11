@@ -1,3 +1,4 @@
+use crate::actions::{Action, action};
 use common::{
     event::{Event, EventDescription, JumpModeChange, JumpRequirement, PauseEventBehaviour},
     mem::{
@@ -5,57 +6,62 @@ use common::{
         str::StaticString,
     },
 };
-use egui::{TextEdit, TextStyle};
+use egui::{Button, TextEdit, TextStyle};
 
-pub fn edit_event(ui: &mut egui::Ui, event: &mut Event) -> bool {
-    let mut recalculate_flag = false;
-    match &mut event.event {
-        Some(EventDescription::TempoChangeEvent { tempo }) => {
-            edit_tempo_change(ui, &mut recalculate_flag, tempo);
+pub fn edit_event(ui: &mut egui::Ui, event: &mut Event) -> Option<Action> {
+    let inner_event = &mut event.event?;
+    let mut requested_action = None;
+
+    ui.vertical(|ui| {
+        ui.label(egui::RichText::new(inner_event.get_name()).heading());
+        egui::Grid::new("event-properties")
+            .num_columns(2)
+            .show(ui, |ui| {
+                requested_action = edit_event_properties(inner_event, ui);
+            });
+        let delete_button = Button::new("Delete Event");
+        if ui.add(delete_button).clicked() {
+            requested_action = Some(action("event:delete_selected_event"));
         }
-        Some(EventDescription::GradualTempoChangeEvent {
+    });
+    requested_action
+}
+
+fn edit_event_properties(inner_event: &mut EventDescription, ui: &mut egui::Ui) -> Option<Action> {
+    match inner_event {
+        EventDescription::TempoChangeEvent { tempo } => edit_tempo_change(ui, tempo),
+        EventDescription::GradualTempoChangeEvent {
             start_tempo,
             end_tempo,
             length,
-        }) => {
-            edit_gradual_tempo_change(ui, &mut recalculate_flag, start_tempo, end_tempo, length);
+        } => edit_gradual_tempo_change(ui, start_tempo, end_tempo, length),
+        EventDescription::RehearsalMarkEvent { label } => edit_rehearsal_mark(ui, label),
+        EventDescription::TimecodeEvent { time, properties } => {
+            edit_timecode_event(ui, time, properties)
         }
-        Some(EventDescription::RehearsalMarkEvent { label }) => {
-            edit_rehearsal_mark(ui, label);
-        }
-        Some(EventDescription::TimecodeEvent { time, properties }) => {
-            edit_timecode_event(ui, time, properties);
-        }
-        Some(EventDescription::JumpEvent {
+        EventDescription::JumpEvent {
             destination,
             requirement,
             when_jumped,
             when_passed,
-        }) => {
-            edit_jump_event(ui, destination, requirement, when_jumped, when_passed);
-        }
-        Some(EventDescription::PlaybackEvent {
+        } => edit_jump_event(ui, destination, requirement, when_jumped, when_passed),
+        EventDescription::PlaybackEvent {
             channel_idx,
             clip_idx,
             sample,
-        }) => {
-            edit_playback_event(ui, channel_idx, clip_idx, sample);
+        } => edit_playback_event(ui, channel_idx, clip_idx, sample),
+        EventDescription::PlaybackStopEvent { channel_idx } => {
+            edit_playback_stop_event(ui, channel_idx)
         }
-        Some(EventDescription::PlaybackStopEvent { channel_idx }) => {
-            edit_playback_stop_event(ui, channel_idx);
-        }
-        Some(EventDescription::PauseEvent { behaviour }) => {
-            edit_pause_event(ui, behaviour);
-        }
-        _ => {}
+        EventDescription::PauseEvent { behaviour } => edit_pause_event(ui, behaviour),
+        _ => None,
     }
-    recalculate_flag
 }
 
-fn edit_pause_event(ui: &mut egui::Ui, behaviour: &mut PauseEventBehaviour) {
+fn edit_pause_event(ui: &mut egui::Ui, behaviour: &mut PauseEventBehaviour) -> Option<Action> {
     ui.label("Behaviour:");
     egui::ComboBox::from_id_salt("behaviour box")
-        .selected_text(format!("{}", behaviour))
+        .selected_text(behaviour.to_string())
         .show_ui(ui, |ui| {
             for val in [
                 PauseEventBehaviour::Hold,
@@ -64,13 +70,15 @@ fn edit_pause_event(ui: &mut egui::Ui, behaviour: &mut PauseEventBehaviour) {
                 PauseEventBehaviour::NextCue,
                 PauseEventBehaviour::Jump { destination: 0 },
             ] {
-                ui.selectable_value(behaviour, val, format!("{}", val));
+                ui.selectable_value(behaviour, val, val.to_string());
             }
         });
     ui.end_row();
+
+    None
 }
 
-fn edit_playback_stop_event(ui: &mut egui::Ui, channel_idx: &mut u16) {
+fn edit_playback_stop_event(ui: &mut egui::Ui, channel_idx: &mut u16) -> Option<Action> {
     ui.label("Channel:");
     ui.add(
         egui::DragValue::new(channel_idx)
@@ -79,6 +87,8 @@ fn edit_playback_stop_event(ui: &mut egui::Ui, channel_idx: &mut u16) {
             .range(0..=29),
     );
     ui.end_row();
+
+    None
 }
 
 fn edit_playback_event(
@@ -86,7 +96,7 @@ fn edit_playback_event(
     channel_idx: &mut u16,
     clip_idx: &mut u16,
     sample: &mut i32,
-) {
+) -> Option<Action> {
     ui.label("Channel:");
     ui.add(
         egui::DragValue::new(channel_idx)
@@ -112,6 +122,8 @@ fn edit_playback_event(
             .range(0..=usize::MAX),
     );
     ui.end_row();
+
+    None
 }
 
 fn edit_jump_event(
@@ -120,7 +132,7 @@ fn edit_jump_event(
     requirement: &mut JumpRequirement,
     when_jumped: &mut JumpModeChange,
     when_passed: &mut JumpModeChange,
-) {
+) -> Option<Action> {
     ui.label("Destination:");
     ui.add(
         egui::DragValue::new(destination)
@@ -174,13 +186,15 @@ fn edit_jump_event(
             }
         });
     ui.end_row();
+
+    None
 }
 
 fn edit_timecode_event(
     ui: &mut egui::Ui,
     time: &mut TimecodeInstant,
     properties: &mut TimecodeProperties,
-) {
+) -> Option<Action> {
     ui.label("Frame rate");
     ui.add(
         egui::DragValue::new(&mut time.frame_rate)
@@ -282,86 +296,84 @@ fn edit_timecode_event(
     ui.end_row();
     ui.label("Drop frame (29.97 fps)");
     if time.frame_rate != 30 {
-        properties.drop_frame = false
+        properties.drop_frame = false;
     }
     ui.add_enabled_ui(time.frame_rate == 30, |ui| {
         ui.checkbox(&mut properties.drop_frame, "");
     });
     ui.end_row();
+
+    None
 }
 
-fn edit_rehearsal_mark(ui: &mut egui::Ui, label: &mut StaticString<8>) {
+fn edit_rehearsal_mark(ui: &mut egui::Ui, label: &mut StaticString<8>) -> Option<Action> {
     ui.label("Label:");
     let mut name = label.str().to_string();
     ui.text_edit_singleline(&mut name);
     *label = StaticString::new(&name);
     ui.end_row();
+
+    None
 }
 
 fn edit_gradual_tempo_change(
     ui: &mut egui::Ui,
-    recalculate_flag: &mut bool,
     start_tempo: &mut u16,
     end_tempo: &mut u16,
     length: &mut u16,
-) {
+) -> Option<Action> {
     ui.label("Start Tempo:");
-    if ui
-        .add(
-            egui::DragValue::new(start_tempo)
-                .speed(0.4)
-                .max_decimals(0)
-                .suffix(" BPM")
-                .range(1..=500),
-        )
-        .is_pointer_button_down_on()
-    {
-        *recalculate_flag = true
-    }
+    let start_tempo_box = ui.add(
+        egui::DragValue::new(start_tempo)
+            .speed(0.4)
+            .max_decimals(0)
+            .suffix(" BPM")
+            .range(1..=500),
+    );
     ui.end_row();
     ui.label("End Tempo:");
-    if ui
-        .add(
-            egui::DragValue::new(end_tempo)
-                .speed(0.4)
-                .max_decimals(0)
-                .suffix(" BPM")
-                .range(1..=500),
-        )
-        .is_pointer_button_down_on()
-    {
-        *recalculate_flag = true
-    }
+    let end_tempo_box = ui.add(
+        egui::DragValue::new(end_tempo)
+            .speed(0.4)
+            .max_decimals(0)
+            .suffix(" BPM")
+            .range(1..=500),
+    );
     ui.end_row();
     ui.label("Length:");
-    if ui
-        .add(
-            egui::DragValue::new(length)
-                .speed(0.4)
-                .max_decimals(0)
-                .suffix(" beats")
-                .range(1..=999),
-        )
-        .is_pointer_button_down_on()
-    {
-        *recalculate_flag = true;
-    }
+    let length_box = ui.add(
+        egui::DragValue::new(length)
+            .speed(0.4)
+            .max_decimals(0)
+            .suffix(" beats")
+            .range(1..=999),
+    );
     ui.end_row();
+
+    if start_tempo_box.is_pointer_button_down_on()
+        || end_tempo_box.is_pointer_button_down_on()
+        || length_box.is_pointer_button_down_on()
+    {
+        Some(action("cue:recalculate_tempo_changes"))
+    } else {
+        None
+    }
 }
 
-fn edit_tempo_change(ui: &mut egui::Ui, recalculate_flag: &mut bool, tempo: &mut u16) {
+fn edit_tempo_change(ui: &mut egui::Ui, tempo: &mut u16) -> Option<Action> {
     ui.label("Tempo:");
-    if ui
-        .add(
-            egui::DragValue::new(tempo)
-                .speed(0.4)
-                .max_decimals(0)
-                .suffix(" BPM")
-                .range(1..=500),
-        )
-        .is_pointer_button_down_on()
-    {
-        *recalculate_flag = true
-    }
+    let tempo_box = ui.add(
+        egui::DragValue::new(tempo)
+            .speed(0.4)
+            .max_decimals(0)
+            .suffix(" BPM")
+            .range(1..=500),
+    );
     ui.end_row();
+
+    if tempo_box.is_pointer_button_down_on() {
+        Some(action("cue:recalculate_tempo_changes"))
+    } else {
+        None
+    }
 }
