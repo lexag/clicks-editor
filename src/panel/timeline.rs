@@ -6,10 +6,13 @@ use common::{
     mem::smpte::TimecodeInstant,
 };
 use egui::{
-    Align, Align2, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response, Stroke, Vec2,
-    Visuals, lerp, pos2, vec2,
+    Align, Align2, Color32, CursorIcon, FontId, InputState, Painter, Pos2, Rect, Response, Stroke,
+    Vec2, Visuals, lerp, pos2, vec2,
 };
-use std::hash::{self, Hash, Hasher};
+use std::{
+    error::Error,
+    hash::{self, Hash, Hasher},
+};
 
 const NUM_LANES: usize = 35;
 const INTERACTION_HANDLE_SIZE: f32 = 10.0;
@@ -20,6 +23,13 @@ const INTERACTION_HANDLE_SIZE: f32 = 10.0;
 // jumps/vamps
 // LTC ruler
 // playback x30
+
+#[derive(Debug, strum::Display)]
+pub enum InteractionError {
+    ArgumentOutOfBounds,
+}
+
+impl Error for InteractionError {}
 
 struct TimelinePersistent {
     lane_heights: Vec<(f32, f32)>,
@@ -35,21 +45,33 @@ impl Default for TimelinePersistent {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum TextFit {
-    Truncate,
+    _Truncate,
     Shrink,
     Hide,
     Ignore,
 }
 
-type InteractionFunction = Option<Box<dyn Fn(&mut Cue, usize)>>;
+struct PlaybackClip {
+    starter_event_idx: usize,
+    start_beat: usize,
+    stop_beat: usize,
+    event_desc: EventDescription,
+}
+
+type InteractionFunctionDragX =
+    Option<Box<dyn Fn(&mut Cue, u16) -> Result<bool, InteractionError>>>;
+type InteractionFunctionDragY =
+    Option<Box<dyn Fn(&mut Cue, usize) -> Result<bool, InteractionError>>>;
+type InteractionFunctionClick = Option<Box<dyn Fn(&mut Cue) -> Result<bool, InteractionError>>>;
+type InteractionResult = Result<bool, InteractionError>;
 
 pub struct TimelineInteractable {
     rect: Rect,
-    drag_x: InteractionFunction,
-    drag_y: InteractionFunction,
-    click: InteractionFunction,
+    drag_x: InteractionFunctionDragX,
+    drag_y: InteractionFunctionDragY,
+    _click: InteractionFunctionClick,
     event_idx: Option<usize>,
     hash: u64,
 }
@@ -59,9 +81,9 @@ impl TimelineInteractable {
         salt: impl Into<String>,
         rect: Rect,
         event_idx: usize,
-        drag_x: InteractionFunction,
-        drag_y: InteractionFunction,
-        click: InteractionFunction,
+        drag_x: InteractionFunctionDragX,
+        drag_y: InteractionFunctionDragY,
+        click: InteractionFunctionClick,
     ) -> Self {
         Self::new_opt(salt, rect, Some(event_idx), drag_x, drag_y, click)
     }
@@ -70,19 +92,19 @@ impl TimelineInteractable {
         salt: impl Into<String>,
         rect: Rect,
         event_idx: Option<usize>,
-        drag_x: InteractionFunction,
-        drag_y: InteractionFunction,
-        click: InteractionFunction,
+        drag_x: InteractionFunctionDragX,
+        drag_y: InteractionFunctionDragY,
+        click: InteractionFunctionClick,
     ) -> Self {
         Self {
             rect,
             drag_x,
-            click,
+            _click: click,
             drag_y,
             event_idx,
             hash: 0,
         }
-        .hashed(salt.into())
+        .hashed(&salt.into())
     }
 
     pub fn basic(salt: impl Into<String>, rect: Rect, event_idx: usize) -> Self {
@@ -92,18 +114,18 @@ impl TimelineInteractable {
     pub fn drag(
         salt: impl Into<String>,
         rect: Rect,
-        drag_x: InteractionFunction,
-        drag_y: InteractionFunction,
+        drag_x: InteractionFunctionDragX,
+        drag_y: InteractionFunctionDragY,
     ) -> Self {
         Self::new_opt(salt, rect, None, drag_x, drag_y, None)
     }
-    pub fn drag_x(salt: impl Into<String>, rect: Rect, drag_x: InteractionFunction) -> Self {
+    pub fn drag_x(salt: impl Into<String>, rect: Rect, drag_x: InteractionFunctionDragX) -> Self {
         Self::new_opt(salt, rect, None, drag_x, None, None)
     }
-    pub fn drag_y(salt: impl Into<String>, rect: Rect, drag_y: InteractionFunction) -> Self {
+    pub fn drag_y(salt: impl Into<String>, rect: Rect, drag_y: InteractionFunctionDragY) -> Self {
         Self::new_opt(salt, rect, None, None, drag_y, None)
     }
-    pub fn click(salt: impl Into<String>, rect: Rect, click: InteractionFunction) -> Self {
+    pub fn click(salt: impl Into<String>, rect: Rect, click: InteractionFunctionClick) -> Self {
         Self::new_opt(salt, rect, None, None, None, click)
     }
     pub fn event_move(salt: impl Into<String>, rect: Rect, event_idx: usize) -> Self {
@@ -117,7 +139,7 @@ impl TimelineInteractable {
         )
     }
 
-    fn hash(&self, salt: String) -> u64 {
+    fn hash(&self, salt: &str) -> u64 {
         let mut h = hash::DefaultHasher::new();
         self.event_idx.hash(&mut h);
         self.drag_x.is_some().hash(&mut h);
@@ -126,18 +148,21 @@ impl TimelineInteractable {
         h.finish()
     }
 
-    fn hashed(self, salt: String) -> Self {
+    fn hashed(self, salt: &str) -> Self {
         Self {
             hash: self.hash(salt),
             ..self
         }
     }
 
-    pub fn make_event_location_drag(event_idx: usize) -> InteractionFunction {
+    pub fn make_event_location_drag(event_idx: usize) -> InteractionFunctionDragX {
+        let event_idx = event_idx.try_into().ok()?;
         Some(Box::new(move |cue, beat| {
-            if let Some(event) = cue.events.get_mut(event_idx as u8) {
-                event.location = beat as u16;
+            if let Some(event) = cue.events.get_mut(event_idx) {
+                event.location = beat;
+                return Ok(true);
             }
+            Ok(false)
         }))
     }
 }
@@ -208,12 +233,12 @@ impl TimelineRenderer {
         if self.x(app.selected_beat_idx) > self.right() - DEADZONE {
             app.pan += Vec2::RIGHT * (self.x(app.selected_beat_idx) - self.right() + DEADZONE)
                 / ui.style().animation_time
-                * 0.02
+                * 0.02;
         }
         if self.x(app.selected_beat_idx) < self.left() + DEADZONE {
             app.pan += Vec2::RIGHT * (self.x(app.selected_beat_idx) - self.left() - DEADZONE)
                 / ui.style().animation_time
-                * 0.02
+                * 0.02;
         }
     }
 
@@ -290,7 +315,7 @@ impl TimelineRenderer {
     fn y(&self, lane: usize) -> f32 {
         let mut y = 0.0;
         for i in 0..lane {
-            y += self.y_size(i)
+            y += self.y_size(i);
         }
         self.resp.rect.min.y + y - self.pan.y
     }
@@ -348,7 +373,7 @@ impl TimelineRenderer {
         )
     }
 
-    fn make_edge_rect(&self, rect: Rect, align: Align2) -> Rect {
+    fn make_edge_rect(rect: Rect, align: Align2) -> Rect {
         let center = align.pos_in_rect(&rect);
         let size_x = if align.y() == Align::Center {
             INTERACTION_HANDLE_SIZE
@@ -578,7 +603,7 @@ impl TimelineRenderer {
             self.render_region(region.2.clone(), rect);
             self.register_interaction_rect(TimelineInteractable::new(
                 "region_drag",
-                self.make_edge_rect(rect, Align2::LEFT_CENTER),
+                TimelineRenderer::make_edge_rect(rect, Align2::LEFT_CENTER),
                 region.3,
                 TimelineInteractable::make_event_location_drag(region.3),
                 None,
@@ -616,9 +641,9 @@ impl TimelineRenderer {
 
         for (i, channel) in clips.iter().enumerate() {
             for clip in channel {
-                let event_idx = clip.0;
-                let rect = self.lane_rect(i + 5, clip.1.into(), (clip.2 - 1).into());
-                self.render_playback_clip(event_idx, rect, clip.3);
+                let event_idx = clip.starter_event_idx;
+                let rect = self.lane_rect(i + 5, clip.start_beat, clip.stop_beat - 1);
+                self.render_playback_clip(event_idx, rect, clip.event_desc);
             }
         }
 
@@ -629,29 +654,29 @@ impl TimelineRenderer {
         }
     }
 
-    fn calculate_playback_clips(&mut self) -> Vec<Vec<(usize, u16, u16, EventDescription)>> {
-        let mut clips = Vec::<Vec<(usize, u16, u16, EventDescription)>>::new();
+    fn calculate_playback_clips(&mut self) -> Vec<Vec<PlaybackClip>> {
+        let mut clips = Vec::<Vec<PlaybackClip>>::new();
         clips.resize_with(32, Vec::new);
         for (i, event) in self.cue.events.iter().enumerate() {
             if let Some(EventDescription::PlaybackEvent {
-                sample,
+                sample: _,
                 channel_idx,
-                clip_idx,
+                clip_idx: _,
             }) = event.event
             {
                 if let Some(clip) = clips[channel_idx as usize].last_mut() {
-                    clip.2 = event.location;
+                    clip.stop_beat = event.location.into();
                 }
-                clips[channel_idx as usize].push((
-                    i,
-                    event.location,
-                    self.last_beat() as u16,
-                    event.event.expect("We are inside the if"),
-                ))
+                clips[channel_idx as usize].push(PlaybackClip {
+                    starter_event_idx: i,
+                    start_beat: event.location.into(),
+                    stop_beat: self.last_beat(),
+                    event_desc: event.event.expect("We are inside the if"),
+                });
             } else if let Some(EventDescription::PlaybackStopEvent { channel_idx }) = event.event
                 && let Some(clip) = clips[channel_idx as usize].last_mut()
             {
-                clip.2 = event.location;
+                clip.stop_beat = event.location.into();
             }
         }
         clips
@@ -676,10 +701,10 @@ impl TimelineRenderer {
                 self.style.window_stroke,
                 egui::StrokeKind::Inside,
             );
-            self.draw_text_basic(rect, format!("Clip #{}", clip_idx));
+            self.draw_text_basic(rect, format!("Clip #{clip_idx}"));
             self.register_interaction_rect(TimelineInteractable::event_move(
                 "playback_start_drag",
-                self.make_edge_rect(rect, Align2::LEFT_CENTER),
+                TimelineRenderer::make_edge_rect(rect, Align2::LEFT_CENTER),
                 event_idx,
             ));
         }
@@ -687,29 +712,38 @@ impl TimelineRenderer {
 
     fn render_playback_stop(&mut self, event_idx: usize, channel_idx: usize, location: u16) {
         let rect = self.lane_rect(channel_idx + 5, location.into(), self.last_beat());
-        let act_rect = self.draw_text_in_box(
-            rect.left_center(),
-            self.style.text_color(),
-            self.style.window_stroke,
-            self.style.window_fill,
-            12.0,
-            "STOP",
-        );
+        let act_rect = self.draw_playback_stop_marker(rect);
         self.register_interaction_rect(TimelineInteractable::new(
             "playback_stop_drag",
             act_rect,
             event_idx,
             TimelineInteractable::make_event_location_drag(event_idx),
             Some(Box::new(move |cue, lane| {
-                if let Some(event) = cue.events.get_mut(event_idx as u8)
-                    && let Some(EventDescription::PlaybackStopEvent { channel_idx }) =
-                        event.event.as_mut()
+                if let Some(event) = cue.events.get_mut(
+                    event_idx
+                        .try_into()
+                        .map_err(|_| InteractionError::ArgumentOutOfBounds)?,
+                ) && let Some(EventDescription::PlaybackStopEvent { channel_idx }) =
+                    event.event.as_mut()
                 {
-                    *channel_idx = lane.saturating_sub(6) as u16;
+                    *channel_idx = u16::try_from(lane.saturating_sub(6)).unwrap_or(0);
+                    return Ok(true);
                 }
+                Ok(false)
             })),
             None,
         ));
+    }
+
+    fn draw_playback_stop_marker(&mut self, rect: Rect) -> Rect {
+        self.draw_text_in_box(
+            rect.left_center(),
+            self.style.text_color(),
+            self.style.window_stroke,
+            self.style.window_fill,
+            12.0,
+            "STOP",
+        )
     }
 
     pub fn render_jumps(&mut self) {
@@ -751,13 +785,13 @@ impl TimelineRenderer {
 
         self.register_interaction_rect(TimelineInteractable::event_move(
             "jump_drag_loc",
-            self.make_edge_rect(rect, loc_side),
+            TimelineRenderer::make_edge_rect(rect, loc_side),
             i,
         ));
 
         self.register_interaction_rect(TimelineInteractable::new(
             "jump_event_drag_destination",
-            self.make_edge_rect(rect, dest_side),
+            TimelineRenderer::make_edge_rect(rect, dest_side),
             i,
             jump_event_destination_drag_interaction(i),
             None,
@@ -1012,7 +1046,7 @@ impl TimelineRenderer {
     }
 
     fn render_ltc_marker(&mut self, i: usize, event: &event::Event, time: TimecodeInstant) {
-        let rect = self.draw_timestamp(event.location, time);
+        let rect = self.draw_timestamp(event.location.into(), time);
         self.register_interaction_rect(TimelineInteractable::new(
             "ltc_marker_drag",
             rect,
@@ -1094,13 +1128,13 @@ impl TimelineRenderer {
             for beat in &self.cue.beats[last_before_cursor..cursor_pos] {
                 time_at_cursor.add_us(beat.length.into());
             }
-            self.draw_timestamp(cursor_pos as u16, time_at_cursor);
+            self.draw_timestamp(cursor_pos, time_at_cursor);
         }
     }
 
-    fn draw_timestamp(&mut self, location: u16, time: TimecodeInstant) -> Rect {
+    fn draw_timestamp(&mut self, location: usize, time: TimecodeInstant) -> Rect {
         self.draw_text_in_box(
-            pos2(self.x(location as usize), self.y_mid(4)),
+            pos2(self.x(location), self.y_mid(4)),
             self.style.text_color(),
             self.style.window_stroke,
             self.style.extreme_bg_color,
@@ -1195,7 +1229,7 @@ impl TimelineRenderer {
 
     fn try_zoom(&self, app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
         if ui.rect_contains_pointer(self.resp.rect) {
-            let zoom_step = ui.input(|i| i.zoom_delta());
+            let zoom_step = ui.input(InputState::zoom_delta);
             app.zoom *= zoom_step;
             app.pan.x *= zoom_step;
             app.pan -= ui.input(|i| i.smooth_scroll_delta);
@@ -1205,8 +1239,9 @@ impl TimelineRenderer {
     }
 
     fn beat_width_from_length(&self, length: u32) -> f32 {
+        #[allow(clippy::cast_precision_loss)]
         let mult = lerp(
-            1.0..=length as f32 / 500000.0_f32,
+            1.0..=length as f32 / 500_000.0_f32,
             self.proportional_scaling,
         );
         self.base_beat_width * mult
@@ -1226,7 +1261,7 @@ impl TimelineRenderer {
         let cue = &mut app.project_file.show.cues[app.selected_cue_idx];
         if let Some(interaction) = ongoing {
             ui.ctx().set_cursor_icon(cursor_icon_from_drag(interaction));
-            self.handle_drag(cue, dragged, interaction, pos);
+            let _res = self.handle_drag(cue, dragged, interaction, pos);
         }
 
         if !mouse_down {
@@ -1251,7 +1286,7 @@ impl TimelineRenderer {
                 app.current_interaction_hash = Some(interaction.hash);
             }
             if clicked && let Some(event_idx) = interaction.event_idx {
-                app.selected_event_idx = event_idx
+                app.selected_event_idx = event_idx;
             }
         }
         hovered
@@ -1273,35 +1308,45 @@ impl TimelineRenderer {
         dragged: bool,
         interaction: &TimelineInteractable,
         pos: Pos2,
-    ) {
+    ) -> Result<bool, InteractionError> {
+        let mut action_happened = false;
         if dragged && let Some(drag_x) = &interaction.drag_x {
-            let beat = self.beat_at_x(pos.x).saturating_sub(1);
-            (drag_x)(cue, beat)
+            let beat = self
+                .beat_at_x(pos.x)
+                .saturating_sub(1)
+                .try_into()
+                .map_err(|_| InteractionError::ArgumentOutOfBounds)?;
+            action_happened |= (drag_x)(cue, beat)?;
         }
         if dragged && let Some(drag_y) = &interaction.drag_y {
             let lane = self.lane_at_y(pos.y);
-            (drag_y)(cue, lane)
+            action_happened = (drag_y)(cue, lane)?;
         }
+        Ok(action_happened)
     }
 }
 
-fn grad_tempo_event_length_drag_interaction(i: usize) -> InteractionFunction {
+fn grad_tempo_event_length_drag_interaction(i: usize) -> InteractionFunctionDragX {
+    let event_idx = u8::try_from(i).ok()?;
     Some(Box::new(move |cue, beat| {
-        if let Some(event) = cue.events.get_mut(i as u8)
+        if let Some(event) = cue.events.get_mut(event_idx)
             && let Some(EventDescription::GradualTempoChangeEvent {
                 start_tempo: _,
                 end_tempo: _,
                 length,
             }) = event.event.as_mut()
         {
-            *length = beat as u16 - event.location
+            *length = beat - event.location;
+            return Ok(true);
         }
+        Ok(false)
     }))
 }
 
-fn jump_event_destination_drag_interaction(i: usize) -> InteractionFunction {
+fn jump_event_destination_drag_interaction(i: usize) -> InteractionFunctionDragX {
+    let event_idx = i.try_into().ok()?;
     Some(Box::new(move |cue, beat| {
-        if let Some(event) = cue.events.get_mut(i as u8)
+        if let Some(event) = cue.events.get_mut(event_idx)
             && let Some(EventDescription::JumpEvent {
                 destination,
                 requirement: _,
@@ -1309,8 +1354,10 @@ fn jump_event_destination_drag_interaction(i: usize) -> InteractionFunction {
                 when_passed: _,
             }) = event.event.as_mut()
         {
-            *destination = beat as u16;
+            *destination = beat;
+            return Ok(true);
         }
+        Ok(false)
     }))
 }
 

@@ -6,7 +6,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     }
 
     if app.project_file.show.cues[app.selected_cue_idx].beats.len() <= app.selected_beat_idx {
-        app.selected_beat_idx = 0
+        app.selected_beat_idx = 0;
     }
 
     ui.horizontal(|ui| {
