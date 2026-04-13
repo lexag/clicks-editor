@@ -42,29 +42,29 @@ impl ClipManager {
                     continue;
                 }
 
-                let buf: Vec<f32> = match reader.spec().sample_format {
-                    hound::SampleFormat::Float => reader
-                        .samples::<f32>()
-                        .map(|sample| {
-                            if let Err(_err) = sample {
-                                return 0.0;
-                            }
-                            sample.expect("Err already handled.")
-                        })
-                        .collect(),
-                    hound::SampleFormat::Int => reader
-                        .samples::<i32>()
-                        .map(|sample| {
-                            if let Err(_err) = sample {
-                                return 0.0;
-                            }
-                            (sample.expect("Err already handled.") as f32).div(32768.0)
-                        })
-                        .collect(),
-                };
+                //let buf: Vec<f32> = match reader.spec().sample_format {
+                //    hound::SampleFormat::Float => reader
+                //        .samples::<f32>()
+                //        .map(|sample| {
+                //            if let Err(_err) = sample {
+                //                return 0.0;
+                //            }
+                //            sample.expect("Err already handled.")
+                //        })
+                //        .collect(),
+                //    hound::SampleFormat::Int => reader
+                //        .samples::<i32>()
+                //        .map(|sample| {
+                //            if let Err(_err) = sample {
+                //                return 0.0;
+                //            }
+                //            (sample.expect("Err already handled.") as f32).div(32768.0)
+                //        })
+                //        .collect(),
+                //};
 
                 let mut clip = Clip::new(clip_file.path(), Self::PEAK_BUCKET_SIZE);
-                clip.generate_peaks(buf);
+                //clip.generate_peaks(buf);
                 self.clips.insert((channel_idx, clip_idx), clip);
             }
         }

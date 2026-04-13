@@ -9,7 +9,7 @@ use common::{
 use egui::{Button, TextEdit, TextStyle};
 
 pub fn edit_event(ui: &mut egui::Ui, event: &mut Event) -> Option<Action> {
-    let inner_event = &mut event.event?;
+    let inner_event = event.event.as_mut()?;
     let mut requested_action = None;
 
     ui.vertical(|ui| {
@@ -102,6 +102,7 @@ fn edit_playback_event(
         egui::DragValue::new(channel_idx)
             .speed(0.1)
             .max_decimals(0)
+            .custom_formatter(|n, _| ((n as u16) + 1).to_string())
             .range(0..=29),
     );
     ui.end_row();

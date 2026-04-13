@@ -11,6 +11,7 @@ use egui::{
 };
 use std::{
     error::Error,
+    fmt::Debug,
     hash::{self, Hash, Hasher},
 };
 
@@ -74,6 +75,12 @@ pub struct TimelineInteractable {
     _click: InteractionFunctionClick,
     event_idx: Option<usize>,
     hash: u64,
+}
+
+impl Debug for TimelineInteractable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.hash.to_string())
+    }
 }
 
 impl TimelineInteractable {
@@ -707,6 +714,23 @@ impl TimelineRenderer {
                 TimelineRenderer::make_edge_rect(rect, Align2::LEFT_CENTER),
                 event_idx,
             ));
+            self.register_interaction_rect(TimelineInteractable::drag_y(
+                "playback_drag_channel",
+                rect,
+                Some(Box::new(move |cue, lane| {
+                    if let Some(event) = cue.events.get_mut(
+                        event_idx
+                            .try_into()
+                            .map_err(|_| InteractionError::ArgumentOutOfBounds)?,
+                    ) && let Some(EventDescription::PlaybackEvent { channel_idx, .. }) =
+                        event.event.as_mut()
+                    {
+                        *channel_idx = u16::try_from(lane.saturating_sub(6)).unwrap_or(0);
+                        return Ok(true);
+                    }
+                    Ok(false)
+                })),
+            ));
         }
     }
 
@@ -1255,7 +1279,7 @@ impl TimelineRenderer {
         let pos = ui.input(|i| i.pointer.interact_pos())?;
 
         let ongoing = self
-            .find_hashed_interaction(app.current_interaction_hash?)
+            .find_hashed_interaction(app.current_interaction_hash)
             .or(self.handle_hover_click(app, clicked, mouse_just_down, pos));
 
         let cue = &mut app.project_file.show.cues[app.selected_cue_idx];
@@ -1292,7 +1316,8 @@ impl TimelineRenderer {
         hovered
     }
 
-    fn find_hashed_interaction(&self, hash: u64) -> Option<&TimelineInteractable> {
+    fn find_hashed_interaction(&self, hash: Option<u64>) -> Option<&TimelineInteractable> {
+        let hash = hash?;
         self.interactions.iter().find(|&inter| inter.hash == hash)
     }
 
