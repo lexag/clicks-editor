@@ -1,14 +1,15 @@
 use crate::app::ClicksEditorApp;
-use common::{
+use egui::{Color32, Key, KeyboardShortcut, ModifierNames, Modifiers};
+use ks_common_clicks::{
     beat::Beat,
     cue::{Cue, CueMetadata},
-    event::{Event, EventDescription, JumpModeChange, JumpRequirement},
-    mem::{
-        smpte::{TimecodeInstant, TimecodeProperties},
-        str::StaticString,
-    },
+    event::{Event, EventDescription, JumpModeChange, JumpRequirement, PauseEventBehaviour},
 };
-use egui::{Color32, Key, KeyboardShortcut, ModifierNames, Modifiers};
+
+use ks_common_generic::{
+    smpte::{FrameRate, Timecode},
+    str::StaticString,
+};
 
 #[derive(Clone)]
 pub struct Action {
@@ -609,8 +610,7 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).events.push(Event::new(
                     app.selected_beat_idx as u16,
                     EventDescription::TimecodeEvent {
-                        time: TimecodeInstant::new(25),
-                        properties: TimecodeProperties::default(),
+                        time: Timecode::from_frames(0, FrameRate::Fps25).expect("tc 0"),
                     },
                 ));
             },
@@ -756,7 +756,7 @@ pub fn action(action_id: &str) -> Action {
                 cue_mut!(app).events.push(Event::new(
                     app.selected_beat_idx as u16,
                     EventDescription::PauseEvent {
-                        behaviour: common::event::PauseEventBehaviour::Hold,
+                        behaviour: PauseEventBehaviour::Hold,
                     },
                 ));
             },

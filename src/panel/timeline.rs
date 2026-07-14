@@ -1,14 +1,14 @@
 use crate::app::ClicksEditorApp;
-use common::{
-    beat::Beat,
-    cue::Cue,
-    event::{self, EventDescription, JumpModeChange, JumpRequirement},
-    mem::smpte::TimecodeInstant,
-};
 use egui::{
     Align, Align2, Color32, CursorIcon, FontId, InputState, Painter, Pos2, Rect, Response, Stroke,
     Vec2, Visuals, lerp, pos2, vec2,
 };
+use ks_common_clicks::{
+    beat::Beat,
+    cue::Cue,
+    event::{self, EventDescription, JumpModeChange, JumpRequirement},
+};
+use ks_common_generic::smpte::{FrameRate, Timecode, TimecodeOffset};
 use std::{
     error::Error,
     fmt::Debug,
@@ -1041,11 +1041,7 @@ impl TimelineRenderer {
 
     fn render_ltc_events(&mut self, cursor_pos: usize) {
         for (i, event) in self.cue.events.clone().iter().enumerate() {
-            if let Some(EventDescription::TimecodeEvent {
-                time,
-                properties: _,
-            }) = event.event
-            {
+            if let Some(EventDescription::TimecodeEvent { time }) = event.event {
                 self.render_ltc_marker(i, event, time);
             } else if let Some(EventDescription::TimecodeStopEvent) = event.event {
                 self.render_ltc_stop_marker(i, event);
@@ -1069,7 +1065,7 @@ impl TimelineRenderer {
         ));
     }
 
-    fn render_ltc_marker(&mut self, i: usize, event: &event::Event, time: TimecodeInstant) {
+    fn render_ltc_marker(&mut self, i: usize, event: &event::Event, time: Timecode) {
         let rect = self.draw_timestamp(event.location.into(), time);
         self.register_interaction_rect(TimelineInteractable::new(
             "ltc_marker_drag",
@@ -1095,11 +1091,7 @@ impl TimelineRenderer {
     fn render_ltc_running_blocks(&mut self) {
         let mut prev_pos = u16::MAX;
         for event in self.cue.events.iter() {
-            if let Some(EventDescription::TimecodeEvent {
-                time: _,
-                properties: _,
-            }) = event.event
-            {
+            if let Some(EventDescription::TimecodeEvent { time: _ }) = event.event {
                 if prev_pos != u16::MAX {
                     let end = event.location as usize - 1;
                     self.draw_timecode_block(prev_pos, end);
@@ -1129,15 +1121,11 @@ impl TimelineRenderer {
     }
 
     fn render_ltc_at_cursor(&mut self, cursor_pos: usize) {
-        let mut time_at_cursor = TimecodeInstant::new(25);
+        let mut time_at_cursor = Timecode::from_frames(0, FrameRate::Fps25).expect("tc 0");
         let mut is_running = false;
         let mut last_before_cursor = 0;
         for event in self.cue.events.iter() {
-            if let Some(EventDescription::TimecodeEvent {
-                time,
-                properties: _,
-            }) = event.event
-            {
+            if let Some(EventDescription::TimecodeEvent { time }) = event.event {
                 if (event.location as usize) < cursor_pos {
                     time_at_cursor = time;
                     last_before_cursor = event.location as usize;
@@ -1150,13 +1138,37 @@ impl TimelineRenderer {
 
         if is_running {
             for beat in &self.cue.beats[last_before_cursor..cursor_pos] {
-                time_at_cursor.add_us(beat.length.into());
+                time_at_cursor = (time_at_cursor
+                    + self
+                        .tc_offset_from_seconds(FrameRate::Fps25, beat.length as f64 / 1000000.0))
+                .expect("addition");
             }
             self.draw_timestamp(cursor_pos, time_at_cursor);
         }
     }
 
-    fn draw_timestamp(&mut self, location: usize, time: TimecodeInstant) -> Rect {
+    // FIXME: this should live in ks-common
+    fn tc_offset_from_seconds(&self, fr: FrameRate, seconds_total: f64) -> TimecodeOffset {
+        let fps = fr.as_float();
+        let hours = seconds_total / 3600.0;
+        let minutes = (seconds_total / 60.0) % 60.0;
+        let seconds = seconds_total % 60.0;
+        let frames = seconds_total.fract() * fps;
+        TimecodeOffset::from_raw_fields(
+            false,
+            hours as u8,
+            minutes as u8,
+            seconds as u8,
+            frames as u8,
+            fr,
+        )
+        .unwrap_or(TimecodeOffset {
+            abs_time: Timecode::default(),
+            is_negative: false,
+        })
+    }
+
+    fn draw_timestamp(&mut self, location: usize, time: Timecode) -> Rect {
         self.draw_text_in_box(
             pos2(self.x(location), self.y_mid(4)),
             self.style.text_color(),

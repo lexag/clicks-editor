@@ -2,8 +2,8 @@ use crate::{
     actions::{self, Action},
     clip::ClipManager,
 };
-use common::cue::Show;
 use egui::{Context, FontFamily, Vec2};
+use ks_common_clicks::cue::Show;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

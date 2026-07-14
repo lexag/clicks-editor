@@ -21,7 +21,7 @@ fn submenu_file(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
 
 fn submenu_help(_app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     ui.label(format!("Editor version {}", ClicksEditorApp::VERSION));
-    ui.label(format!("Common version {}", common::VERSION));
+    ui.label(format!("Common version {}", ks_common_generic::VERSION));
 }
 
 fn submenu_view(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {

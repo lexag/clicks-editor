@@ -15,11 +15,13 @@ eula = false
 [dependencies]
 serde = { version = "1.0.219", features = [ "derive" ] }
 serde_json = "1.0.142"
-common = { git = "https://github.com/lexag/clicks-common.git", branch = "dev", features = [ "std", "serde", "postcard", "json" ] }
-eframe = { version = "0.32.0", features = [ "persistence" ] }
-egui = { version = "0.32.0", features = [ "persistence" ] }
+ks-common-clicks = { git = "https://github.com/lexag/ks-common.git", branch = "main", features = [ "std", "serde", "postcard", "json" ] }
+ks-common-generic = { git = "https://github.com/lexag/ks-common.git", branch = "main", features = [ "std", "serde", "postcard", "json" ] }
+ks-common-ui = { git = "https://github.com/lexag/ks-common.git", branch = "main", features = [ ] }
+eframe = { version = "0.33.3", features = [ "persistence" ] }
+egui = { version = "0.33.3", features = [ "persistence" ] }
 rfd = "0.15.4"
-egui_extras = { version = "0.32.0", features = [ "all_loaders" ] } 
+egui_extras = { version = "0.33.3", features = [ "all_loaders" ] } 
 egui_material_icons = "0.4.0"
 hound = "3.5.1"
 open = "5.3.2"

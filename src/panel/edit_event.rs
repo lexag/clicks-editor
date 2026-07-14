@@ -1,12 +1,9 @@
 use crate::actions::{Action, action};
-use common::{
-    event::{Event, EventDescription, JumpModeChange, JumpRequirement, PauseEventBehaviour},
-    mem::{
-        smpte::{TimecodeInstant, TimecodeProperties, TimecodeUserBitFormat},
-        str::StaticString,
-    },
-};
 use egui::{Button, TextEdit, TextStyle};
+use ks_common_clicks::event::{
+    Event, EventDescription, JumpModeChange, JumpRequirement, PauseEventBehaviour,
+};
+use ks_common_generic::{smpte::Timecode, str::StaticString};
 
 pub fn edit_event(ui: &mut egui::Ui, event: &mut Event) -> Option<Action> {
     let inner_event = event.event.as_mut()?;
@@ -36,9 +33,7 @@ fn edit_event_properties(inner_event: &mut EventDescription, ui: &mut egui::Ui) 
             length,
         } => edit_gradual_tempo_change(ui, start_tempo, end_tempo, length),
         EventDescription::RehearsalMarkEvent { label } => edit_rehearsal_mark(ui, label),
-        EventDescription::TimecodeEvent { time, properties } => {
-            edit_timecode_event(ui, time, properties)
-        }
+        EventDescription::TimecodeEvent { time } => edit_timecode_event(ui, time),
         EventDescription::JumpEvent {
             destination,
             requirement,
@@ -191,14 +186,10 @@ fn edit_jump_event(
     None
 }
 
-fn edit_timecode_event(
-    ui: &mut egui::Ui,
-    time: &mut TimecodeInstant,
-    properties: &mut TimecodeProperties,
-) -> Option<Action> {
+fn edit_timecode_event(ui: &mut egui::Ui, time: &mut Timecode) -> Option<Action> {
     ui.label("Frame rate");
     ui.add(
-        egui::DragValue::new(&mut time.frame_rate)
+        egui::DragValue::new(&mut time.frame_rate.fps)
             .speed(0.1)
             .range(0..=30),
     );
@@ -206,103 +197,103 @@ fn edit_timecode_event(
     ui.label("Time:");
     ui.horizontal(|ui| {
         for (val, max, _unit) in [
-            (&mut time.h, 29, 'h'),
-            (&mut time.m, 59, 'm'),
-            (&mut time.s, 59, 's'),
-            (&mut time.f, time.frame_rate, 'f'),
+            (&mut time.hours, 29, 'h'),
+            (&mut time.minutes, 59, 'm'),
+            (&mut time.seconds, 59, 's'),
+            (&mut time.frames, time.frame_rate.fps, 'f'),
         ] {
-            ui.add_enabled(
-                !properties.use_wall_time,
-                egui::DragValue::new(val)
-                    .speed(0.1)
-                    .custom_formatter(|n, _| format!("{n:02}"))
-                    .max_decimals(0)
-                    .range(0..=max),
-            );
+            //ui.add_enabled(
+            //    !properties.use_wall_time,
+            //    egui::DragValue::new(val)
+            //        .speed(0.1)
+            //        .custom_formatter(|n, _| format!("{n:02}"))
+            //        .max_decimals(0)
+            //        .range(0..=max),
+            //);
         }
     });
     ui.end_row();
 
-    ui.label("Use wall time");
-    ui.checkbox(&mut properties.use_wall_time, "");
-    ui.end_row();
+    //ui.label("Use wall time");
+    //ui.checkbox(&mut properties.use_wall_time, "");
+    //ui.end_row();
 
     ui.label("User bits");
     ui.end_row();
     ui.label("Format");
-    egui::ComboBox::from_id_salt("user-bit-format")
-        .selected_text(format!("{:?}", properties.user_bit_format)) // FIXME: user bit format needs
-        // to implement Display, but
-        // does not currently.
-        .show_ui(ui, |ui| {
-            for val in [
-                TimecodeUserBitFormat::Unspecified,
-                TimecodeUserBitFormat::DateTimezone,
-                TimecodeUserBitFormat::EightBitLittleEndian,
-            ] {
-                ui.selectable_value(&mut properties.user_bit_format, val, format!("{:?}", val));
-            }
-        });
-    ui.end_row();
+    //egui::ComboBox::from_id_salt("user-bit-format")
+    //    .selected_text(format!("{:?}", properties.user_bit_format)) // FIXME: user bit format needs
+    //    // to implement Display, but
+    //    // does not currently.
+    //    .show_ui(ui, |ui| {
+    //        for val in [
+    //            TimecodeUserBitFormat::Unspecified,
+    //            TimecodeUserBitFormat::DateTimezone,
+    //            TimecodeUserBitFormat::EightBitLittleEndian,
+    //        ] {
+    //            ui.selectable_value(&mut properties.user_bit_format, val, format!("{:?}", val));
+    //        }
+    //    });
+    //ui.end_row();
 
-    ui.label("Content");
-    match properties.user_bit_format {
-        TimecodeUserBitFormat::Unspecified => {
-            ui.horizontal(|ui| {
-                for i in 0..4 {
-                    ui.add(
-                        egui::DragValue::new(&mut properties.user_bits[i])
-                            .speed(0.1)
-                            .hexadecimal(2, false, true)
-                            .range(0..=256),
-                    );
-                }
-            });
-        }
-        TimecodeUserBitFormat::EightBitLittleEndian => {
-            let mut text = String::from_utf8_lossy(&properties.user_bits).replace("\0", "");
-            ui.add(
-                TextEdit::singleline(&mut text)
-                    .code_editor()
-                    .lock_focus(false)
-                    .char_limit(4)
-                    .font(TextStyle::Monospace),
-            );
-            let mut bytes = vec![];
-            for c in text.to_string().chars() {
-                if c.is_ascii() {
-                    let mut b = [0u8; 4];
-                    c.encode_utf8(&mut b);
-                    bytes.push(b[0])
-                }
-            }
-            bytes.resize(4, 0);
-            properties.user_bits.copy_from_slice(&bytes);
-        }
-        _ => {
-            ui.label("(no options available)");
-        }
-    }
-    ui.end_row();
+    //ui.label("Content");
+    //match properties.user_bit_format {
+    //    TimecodeUserBitFormat::Unspecified => {
+    //        ui.horizontal(|ui| {
+    //            for i in 0..4 {
+    //                ui.add(
+    //                    egui::DragValue::new(&mut properties.user_bits[i])
+    //                        .speed(0.1)
+    //                        .hexadecimal(2, false, true)
+    //                        .range(0..=256),
+    //                );
+    //            }
+    //        });
+    //    }
+    //    TimecodeUserBitFormat::EightBitLittleEndian => {
+    //        let mut text = String::from_utf8_lossy(&properties.user_bits).replace("\0", "");
+    //        ui.add(
+    //            TextEdit::singleline(&mut text)
+    //                .code_editor()
+    //                .lock_focus(false)
+    //                .char_limit(4)
+    //                .font(TextStyle::Monospace),
+    //        );
+    //        let mut bytes = vec![];
+    //        for c in text.to_string().chars() {
+    //            if c.is_ascii() {
+    //                let mut b = [0u8; 4];
+    //                c.encode_utf8(&mut b);
+    //                bytes.push(b[0])
+    //            }
+    //        }
+    //        bytes.resize(4, 0);
+    //        properties.user_bits.copy_from_slice(&bytes);
+    //    }
+    //    _ => {
+    //        ui.label("(no options available)");
+    //    }
+    //}
+    //ui.end_row();
 
-    ui.label("Frame # offset");
-    ui.add(
-        egui::DragValue::new(&mut properties.frame_offset)
-            .speed(0.1)
-            .range(0..=30 - time.frame_rate),
-    );
-    ui.end_row();
-    ui.label("Color framing");
-    ui.checkbox(&mut properties.color_framing, "");
-    ui.end_row();
-    ui.label("Drop frame (29.97 fps)");
-    if time.frame_rate != 30 {
-        properties.drop_frame = false;
-    }
-    ui.add_enabled_ui(time.frame_rate == 30, |ui| {
-        ui.checkbox(&mut properties.drop_frame, "");
-    });
-    ui.end_row();
+    //ui.label("Frame # offset");
+    //ui.add(
+    //    egui::DragValue::new(&mut properties.frame_offset)
+    //        .speed(0.1)
+    //        .range(0..=30 - time.frame_rate),
+    //);
+    //ui.end_row();
+    //ui.label("Color framing");
+    //ui.checkbox(&mut properties.color_framing, "");
+    //ui.end_row();
+    //ui.label("Drop frame (29.97 fps)");
+    //if time.frame_rate != 30 {
+    //    properties.drop_frame = false;
+    //}
+    //ui.add_enabled_ui(time.frame_rate == 30, |ui| {
+    //    ui.checkbox(&mut properties.drop_frame, "");
+    //});
+    //ui.end_row();
 
     None
 }

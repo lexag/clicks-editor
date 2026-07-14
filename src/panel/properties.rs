@@ -1,5 +1,6 @@
-use crate::{actions, app::ClicksEditorApp, panel::edit_event::edit_event};
-use common::mem::str::StaticString;
+use crate::{app::ClicksEditorApp, panel::edit_event::edit_event};
+use ks_common_clicks::cue::Cue;
+use ks_common_generic::str::StaticString;
 
 pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     if app.selected_cue_idx >= app.project_file.show.cues.len() {
@@ -30,7 +31,7 @@ pub fn display(app: &mut ClicksEditorApp, ui: &mut egui::Ui) {
     });
 }
 
-fn edit_cue_properties(ui: &mut egui::Ui, cue: &mut common::cue::Cue) {
+fn edit_cue_properties(ui: &mut egui::Ui, cue: &mut Cue) {
     ui.vertical(|ui| {
         ui.label(
             egui::RichText::new(format!(
